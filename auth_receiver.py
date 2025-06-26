@@ -16,6 +16,10 @@ def exchange_token():
         return jsonify({"success": True, "message": "Access token generated and saved"})
     else:
         return jsonify({"success": False, "error": "Token exchange failed"}), 500
+@app.route("/callback", methods=["GET"])
+def handle_callback():
+    return "✅ Callback received by droplet server.", 200
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001)

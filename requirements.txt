@@ -1,3 +1,6 @@
+requests
+mcp
+fastmcp
 flask
 kiteconnect
 python-dotenv
