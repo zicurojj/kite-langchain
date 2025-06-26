@@ -1,0 +1,18 @@
+version: "3.8"
+
+services:
+  kite-mcp-server:
+    build: .
+    container_name: kite_mcp_server
+    ports:
+      - "7860:7860"
+      - "5001:5001"
+    environment:
+      - KITE_API_KEY=${KITE_API_KEY}
+      - KITE_API_SECRET=${KITE_API_SECRET}
+      - KITE_REDIRECT_URL=https://zap.zicuro.shop/callback
+      - DOCKER_ENV=true
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    restart: unless-stopped
