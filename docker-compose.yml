@@ -10,7 +10,8 @@ services:
     environment:
       - KITE_API_KEY=${KITE_API_KEY}
       - KITE_API_SECRET=${KITE_API_SECRET}
-      - KITE_REDIRECT_URL=https://zap.zicuro.shop/callback
+      - KITE_REDIRECT_URL=${KITE_REDIRECT_URL:-http://localhost:8080/callback}
+      - DROPLET_URL=${DROPLET_URL:-http://localhost:5001/auth/exchange}
       - DOCKER_ENV=true
     volumes:
       - ./data:/app/data

@@ -1,93 +1,87 @@
 from mcp.server.fastmcp import FastMCP
 from trading import place_order, get_positions
 from auth_fully_automated import FullyAutomatedKiteAuth
+from auth_utils import extract_profile_data, format_authentication_status
+from datetime import datetime
 
 mcp = FastMCP("Zerodha MCP Server")
+
+auth_manager = FullyAutomatedKiteAuth()
+
+@mcp.tool()
+def get_kite_login_url() -> dict:
+    try:
+        login_url = auth_manager.get_login_url()
+        return {
+            "content": [{
+                "type": "text",
+                "text": f"🔗 Please open this URL in your browser to log in:\n\n{login_url}\n\nYour access token will be automatically saved after login."
+            }]
+        }
+    except Exception as e:
+        return {"content": [{"type": "text", "text": f"❌ Failed to generate login URL: {e}"}]}
 
 @mcp.tool()
 def check_authentication_status() -> dict:
     try:
-        auth_manager = FullyAutomatedKiteAuth()
         tokens = auth_manager.config.load_tokens()
-
         if not tokens:
-            return {"content": [{"type": "text", "text": "❌ No authentication tokens found. Please run 'python auth_manager.py auth' to authenticate."}]}
+            return {"content": [{"type": "text", "text": "❌ No authentication tokens found. Please run get_kite_login_url() to authenticate."}]}
 
         if auth_manager.is_token_valid(tokens):
             try:
                 auth_manager.kc.set_access_token(tokens['access_token'])
                 profile = auth_manager.kc.profile()
-                user_name = profile.get('user_name', 'Unknown')
-                if isinstance(user_name, dict):
-                    user_name = user_name.get('name', 'Unknown')
-                elif not isinstance(user_name, str):
-                    user_name = str(user_name)
-                email = profile.get('email', 'Unknown')
-                if not isinstance(email, str):
-                    email = str(email)
-                broker = profile.get('broker', 'Unknown')
-                if not isinstance(broker, str):
-                    broker = str(broker)
-
-                message = f"✅ Authentication Status: VALID\n👤 User: {user_name}\n📧 Email: {email}\n🏢 Broker: {broker}\n📅 Token Generated: {tokens.get('generated_at', 'Unknown')}"
+                profile_data = extract_profile_data(profile)
+                message = format_authentication_status('valid', profile_data, tokens)
             except Exception as e:
                 message = f"✅ Authentication Status: VALID\n❌ Could not fetch user details: {e}"
         else:
-            message = "❌ Authentication Status: INVALID or EXPIRED\n💡 Please run 'python auth_manager.py auth' to re-authenticate."
-
+            message = format_authentication_status('expired')
         return {"content": [{"type": "text", "text": message}]}
     except Exception as e:
         return {"content": [{"type": "text", "text": f"❌ Error checking authentication: {e}"}]}
 
 @mcp.tool()
-def authenticate_now() -> dict:
-    try:
-        import subprocess
-        subprocess.Popen(['python', 'token_auth_flow.py'])
-
-        auth_manager = FullyAutomatedKiteAuth()
-        status = auth_manager.get_token_status()
-
-        if status['status'] == 'valid':
-            tokens = auth_manager.config.load_tokens()
-            message = "🔍 AUTHENTICATION STATUS CHECK\n\n✅ You already have a valid access token!\n\n"
-            message += f"📅 Generated: {tokens.get('generated_at', 'Unknown')}\n⏰ Expires: {tokens.get('expires_at', 'Unknown')}\n\n"
-            message += "❓ Do you want to re-authenticate anyway?\n"
-            return {"content": [{"type": "text", "text": message}]}
-        else:
-            message = "🚀 Starting authentication flow...\n\n📋 What will happen:\n1. 🌐 Browser will open with Zerodha login\n2. 🔐 You log in\n3. 🤖 System automatically captures callback\n4. ⚡ Token saved\n5. ✅ Ready to trade!"
-            return {"content": [{"type": "text", "text": message}]}
-    except Exception as e:
-        return {"content": [{"type": "text", "text": f"❌ Authentication error: {e}"}]}
-
-@mcp.tool()
-def confirm_reauthenticate() -> dict:
-    from trading import get_authenticated_kite_client
-    kc = get_authenticated_kite_client(force_auth=True)
-    profile = kc.profile()
-    user = profile.get("user_name", "Unknown")
-    return {"content": [{"type": "text", "text": f"🔄 Re-authenticated successfully for user: {user}"}]}
-
-@mcp.tool()
-def force_reauthenticate() -> dict:
-    auth_manager = FullyAutomatedKiteAuth()
-    access_token = auth_manager.authenticate_fully_automated(force=True)
-    return {"content": [{"type": "text", "text": "🔄 Forced re-authentication complete"}]} if access_token else {"content": [{"type": "text", "text": "❌ Re-authentication failed"}]}
-
-@mcp.tool()
 def buy_a_stock(stock: str, qty: int) -> dict:
-    result = place_order(stock, qty, "BUY")
-    return {"content": [{"type": "text", "text": result.get("message", "❌ Error occurred")}]} if result else {"content": [{"type": "text", "text": "❌ No response from trading system"}]}
+    if not stock or not isinstance(stock, str):
+        return {"content": [{"type": "text", "text": "❌ Invalid stock symbol."}]}
+    if not isinstance(qty, int) or qty <= 0:
+        return {"content": [{"type": "text", "text": "❌ Quantity must be a positive integer."}]}
+    result = place_order(stock.upper(), qty, "BUY")
+    return {"content": [{"type": "text", "text": result.get("message", "❌ Order failed.")}]} 
 
 @mcp.tool()
 def sell_a_stock(stock: str, qty: int) -> dict:
-    result = place_order(stock, qty, "SELL")
-    return {"content": [{"type": "text", "text": result.get("message", "❌ Error occurred")}]} if result else {"content": [{"type": "text", "text": "❌ No response from trading system"}]}
+    if not stock or not isinstance(stock, str):
+        return {"content": [{"type": "text", "text": "❌ Invalid stock symbol."}]}
+    if not isinstance(qty, int) or qty <= 0:
+        return {"content": [{"type": "text", "text": "❌ Quantity must be a positive integer."}]}
+    result = place_order(stock.upper(), qty, "SELL")
+    return {"content": [{"type": "text", "text": result.get("message", "❌ Order failed.")}]} 
 
 @mcp.tool()
 def show_portfolio() -> dict:
-    holdings = get_positions()
-    return {"content": [{"type": "text", "text": holdings}]}
+    try:
+        holdings = get_positions()
+        return {"content": [{"type": "text", "text": holdings}]}
+    except Exception as e:
+        return {"content": [{"type": "text", "text": f"❌ Error fetching portfolio: {str(e)}"}]}
+
+@mcp.tool()
+def health_check() -> dict:
+    try:
+        status = auth_manager.get_token_status()
+        health_status = {
+            "server": "✅ MCP Server Running",
+            "authentication": f"{'✅' if status['status'] == 'valid' else '❌'} {status['message']}",
+            "timestamp": datetime.now().isoformat()
+        }
+        return {
+            "content": [{"type": "text", "text": "\n".join(f"{k}: {v}" for k, v in health_status.items())}]
+        }
+    except Exception as e:
+        return {"content": [{"type": "text", "text": f"❌ Health check failed: {str(e)}"}]}
 
 if __name__ == "__main__":
     from fastmcp.web import serve_web

@@ -4,12 +4,11 @@ Manual Authentication for Kite Connect
 Alternative authentication method for Docker/headless environments
 """
 
-import os
-import json
 import sys
 from datetime import datetime, timedelta
 from kiteconnect import KiteConnect
 from auth_fully_automated import AutoAuthConfig
+from auth_utils import extract_profile_data
 import logging
 
 # Setup logging
@@ -63,7 +62,11 @@ class ManualKiteAuth:
             }
             
             # Save tokens
-            self.config.save_tokens(token_data)
+            self.config.save_tokens(
+                token_data["access_token"],
+                token_data["refresh_token"],
+                token_data["expires_at"]
+            )
             
             # Verify the token works
             self.kc.set_access_token(data["access_token"])
@@ -71,24 +74,11 @@ class ManualKiteAuth:
             
             logger.info("✅ Authentication successful!")
 
-            # Safely extract profile data, handling different data types
-            user_name = profile.get('user_name', 'Unknown')
-            if isinstance(user_name, dict):
-                user_name = user_name.get('name', 'Unknown')
-            elif not isinstance(user_name, str):
-                user_name = str(user_name)
-
-            email = profile.get('email', 'Unknown')
-            if not isinstance(email, str):
-                email = str(email)
-
-            broker = profile.get('broker', 'Unknown')
-            if not isinstance(broker, str):
-                broker = str(broker)
-
-            logger.info(f"👤 User: {user_name}")
-            logger.info(f"📧 Email: {email}")
-            logger.info(f"🏢 Broker: {broker}")
+            # Extract profile data using utility function
+            profile_data = extract_profile_data(profile)
+            logger.info(f"👤 User: {profile_data['user_name']}")
+            logger.info(f"📧 Email: {profile_data['email']}")
+            logger.info(f"🏢 Broker: {profile_data['broker']}")
             
             return True
             

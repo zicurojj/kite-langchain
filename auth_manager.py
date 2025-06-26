@@ -5,6 +5,7 @@ Combines all authentication functionality into one script
 """
 
 from auth_fully_automated import FullyAutomatedKiteAuth
+from auth_utils import extract_profile_data
 import sys
 import os
 
@@ -54,19 +55,10 @@ class UnifiedAuthManager:
                         self.auth.kc.set_access_token(tokens['access_token'])
                         profile = self.auth.kc.profile()
 
-                        # Safely extract profile data
-                        user_name = profile.get('user_name', 'Unknown')
-                        if isinstance(user_name, dict):
-                            user_name = user_name.get('name', 'Unknown')
-                        elif not isinstance(user_name, str):
-                            user_name = str(user_name)
-
-                        email = profile.get('email', 'Unknown')
-                        if not isinstance(email, str):
-                            email = str(email)
-
-                        print(f"👤 User: {user_name}")
-                        print(f"📧 Email: {email}")
+                        # Extract profile data using utility function
+                        profile_data = extract_profile_data(profile)
+                        print(f"👤 User: {profile_data['user_name']}")
+                        print(f"📧 Email: {profile_data['email']}")
                         print("✅ Ready for trading!")
                     except Exception as e:
                         print(f"⚠️ Could not fetch user details: {e}")

@@ -1,11 +1,11 @@
 
 # trading.py
-from kiteconnect import KiteConnect
 from logger import log_order_success, log_order_rejection, log_order_error, log_order_placed_but_rejected
 from datetime import datetime
 import json
 import time
 from auth_fully_automated import FullyAutomatedKiteAuth, TokenExpiredException
+from auth_utils import get_auth_retry_message, get_manual_auth_instructions, is_token_expired_error
 
 # Initialize authentication manager
 auth_manager = FullyAutomatedKiteAuth()
@@ -42,11 +42,7 @@ def get_authenticated_kite_client(force_auth=False):
     except TokenExpiredException as e:
         # Token expired - inform user but don't auto-authenticate
         print(f"🔐 {e}")
-        print("💡 Authentication required for trading operations.")
-        print("🚀 Options:")
-        print("   • Run: python auth_manager.py auth")
-        print("   • Run: python auth_manager.py force")
-        print("   • Use MCP tool: authenticate_now()")
+        print(get_manual_auth_instructions())
         raise
     except Exception as e:
         print(f"❌ Error getting authenticated client: {e}")
@@ -77,9 +73,64 @@ def place_order(tradingsymbol, quantity, transaction_type, exchange="NSE", produ
     """
     Place an order and log the result with detailed error handling.
 
+    Args:
+        tradingsymbol (str): Trading symbol (e.g., 'RELIANCE', 'TCS')
+        quantity (int): Number of shares to trade
+        transaction_type (str): 'BUY' or 'SELL'
+        exchange (str): Exchange name (NSE, BSE, etc.)
+        product (str): Product type (CNC, MIS, NRML)
+        order_type (str): Order type (MARKET, LIMIT, SL, SL-M)
+        price (float, optional): Price for limit orders
+        trigger_price (float, optional): Trigger price for stop loss orders
+        variety (str): Order variety (regular, bo, co, amo)
+        validity (str): Order validity (DAY, IOC)
+
     Returns:
         dict: Order result with status and details
     """
+    # Input validation
+    if not tradingsymbol or not isinstance(tradingsymbol, str):
+        return {
+            "status": "validation_error",
+            "error": "Invalid trading symbol",
+            "message": "Trading symbol must be a non-empty string"
+        }
+
+    if not isinstance(quantity, int) or quantity <= 0:
+        return {
+            "status": "validation_error",
+            "error": "Invalid quantity",
+            "message": "Quantity must be a positive integer"
+        }
+
+    if transaction_type not in ['BUY', 'SELL']:
+        return {
+            "status": "validation_error",
+            "error": "Invalid transaction type",
+            "message": "Transaction type must be 'BUY' or 'SELL'"
+        }
+
+    if exchange not in ['NSE', 'BSE', 'NFO', 'CDS', 'MCX']:
+        return {
+            "status": "validation_error",
+            "error": "Invalid exchange",
+            "message": "Exchange must be one of: NSE, BSE, NFO, CDS, MCX"
+        }
+
+    if order_type in ['LIMIT', 'SL'] and (price is None or price <= 0):
+        return {
+            "status": "validation_error",
+            "error": "Invalid price",
+            "message": f"Price is required and must be positive for {order_type} orders"
+        }
+
+    if order_type in ['SL', 'SL-M'] and (trigger_price is None or trigger_price <= 0):
+        return {
+            "status": "validation_error",
+            "error": "Invalid trigger price",
+            "message": f"Trigger price is required and must be positive for {order_type} orders"
+        }
+
     timestamp = datetime.now().isoformat()
 
     # Check if we have an authenticated client
@@ -87,8 +138,7 @@ def place_order(tradingsymbol, quantity, transaction_type, exchange="NSE", produ
     if kc is None:
         try:
             # Try automatic authentication when token expires
-            print("🔐 Access token expired. Starting automatic re-authentication...")
-            print("🌐 Browser will open for login - please complete authentication")
+            print(get_auth_retry_message())
             kc = auth_manager.get_authenticated_client(auto_authenticate=True)
         except Exception as e:
             return {
@@ -200,9 +250,8 @@ def place_order(tradingsymbol, quantity, transaction_type, exchange="NSE", produ
 
     except Exception as e:
         # Check if this is a token expiry error and try auto-authentication
-        if "token" in str(e).lower() or "auth" in str(e).lower():
-            print("🔐 Access token expired during order placement. Starting automatic re-authentication...")
-            print("🌐 Browser will open for login - please complete authentication")
+        if is_token_expired_error(e):
+            print(get_auth_retry_message())
             try:
                 # Try automatic re-authentication
                 kc = auth_manager.get_authenticated_client(auto_authenticate=True)
@@ -335,8 +384,7 @@ def get_positions():
     if kc is None:
         try:
             # Try automatic authentication when token expires
-            print("🔐 Access token expired. Starting automatic re-authentication...")
-            print("🌐 Browser will open for login - please complete authentication")
+            print(get_auth_retry_message())
             kc = auth_manager.get_authenticated_client(auto_authenticate=True)
         except Exception as e:
             return f"❌ Automatic authentication failed: {e}\n💡 Please try manually: 'python auth_manager.py auth'"
@@ -349,9 +397,8 @@ def get_positions():
             return "No positions found."
     except Exception as e:
         # Token might have expired during the call
-        if "token" in str(e).lower() or "auth" in str(e).lower():
-            print("🔐 Access token expired during API call. Starting automatic re-authentication...")
-            print("🌐 Browser will open for login - please complete authentication")
+        if is_token_expired_error(e):
+            print(get_auth_retry_message())
             kc = None  # Reset client
             try:
                 # Try automatic re-authentication

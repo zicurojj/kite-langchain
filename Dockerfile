@@ -6,6 +6,9 @@ COPY . /app
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-EXPOSE 5001
+EXPOSE 7860 5001
 
-CMD ["python", "auth_receiver.py"]
+# Create necessary directories
+RUN mkdir -p /app/data /app/logs
+
+CMD ["python", "mcp_server.py"]

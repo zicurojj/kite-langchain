@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from urllib.parse import urlparse, parse_qs
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from kiteconnect import KiteConnect
+from auth_utils import extract_profile_data
 import logging
 
 # Try to import python-dotenv for .env file support
@@ -118,33 +119,45 @@ class AutoAuthCallbackHandler(BaseHTTPRequestHandler):
         try:
             parsed_url = urlparse(self.path)
             query_params = parse_qs(parsed_url.query)
-            
-            if parsed_url.path == '/callback':
-                # Extract request token from callback
-                request_token = query_params.get('request_token', [None])[0]
-                action = query_params.get('action', [None])[0]
-                status = query_params.get('status', [None])[0]
-                
-                if request_token and action == 'login' and status == 'success':
-                    logger.info("✅ Automatically captured request token")
-                    
-                    # Exchange request token for access token
-                    success = self.auth_manager.exchange_request_token(request_token)
-                    
-                    if success:
-                        self.send_success_response()
-                    else:
-                        self.send_error_response("Failed to exchange request token")
-                else:
-                    error_msg = f"Authentication failed. Status: {status}, Action: {action}"
-                    logger.error(error_msg)
-                    self.send_error_response(error_msg)
-            else:
+
+            # Security: Only accept callback path
+            if parsed_url.path != '/callback':
                 self.send_error_response("Invalid callback path")
-                
+                return
+
+            # Extract and validate parameters
+            request_token = query_params.get('request_token', [None])[0]
+            action = query_params.get('action', [None])[0]
+            status = query_params.get('status', [None])[0]
+
+            # Validate required parameters
+            if not request_token:
+                self.send_error_response("Missing request token")
+                return
+
+            # Security: Validate request token format (basic check)
+            if not request_token.isalnum() or len(request_token) < 10:
+                self.send_error_response("Invalid request token format")
+                return
+
+            if action == 'login' and status == 'success':
+                logger.info("✅ Automatically captured request token")
+
+                # Exchange request token for access token
+                success = self.auth_manager.exchange_request_token(request_token)
+
+                if success:
+                    self.send_success_response()
+                else:
+                    self.send_error_response("Failed to exchange request token")
+            else:
+                error_msg = f"Authentication failed. Status: {status}, Action: {action}"
+                logger.error(error_msg)
+                self.send_error_response(error_msg)
+
         except Exception as e:
             logger.error(f"Error handling callback: {e}")
-            self.send_error_response(str(e))
+            self.send_error_response("Internal server error")
     
     def send_success_response(self):
         """Send success response to browser"""
@@ -260,7 +273,8 @@ class AutoAuthCallbackHandler(BaseHTTPRequestHandler):
     
     def log_message(self, format, *args):
         """Override to reduce HTTP server logging"""
-        # Intentionally suppress HTTP server logging
+        # Intentionally suppress HTTP server logging to reduce noise
+        # Parameters are required by the base class but not used
         pass
 
 class FullyAutomatedKiteAuth:
@@ -458,14 +472,9 @@ class FullyAutomatedKiteAuth:
             profile = self.kc.profile()
 
             if profile:
-                # Safely extract user name, handling different data types
-                user_name = profile.get('user_name', 'Unknown')
-                if isinstance(user_name, dict):
-                    user_name = user_name.get('name', 'Unknown')
-                elif not isinstance(user_name, str):
-                    user_name = str(user_name)
-
-                logger.info(f"Token is valid for user: {user_name}")
+                # Extract profile data using utility function
+                profile_data = extract_profile_data(profile)
+                logger.info(f"Token is valid for user: {profile_data['user_name']}")
                 return True
             
         except Exception as e:
