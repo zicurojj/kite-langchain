@@ -83,5 +83,5 @@ def start_token_auth_flow(api_key, droplet_url, port=8765):
 if __name__ == "__main__":
     # Replace with actual values or inject from environment
     KITE_API_KEY = "imtwpp6e5x9ozlwt"
-    DROPLET_URL = "http://zap.zicuro.shop:5001/auth/exchange"
+    DROPLET_URL = "https://zap.zicuro.shop:5001/auth/exchange"
     start_token_auth_flow(KITE_API_KEY, DROPLET_URL)

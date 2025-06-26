@@ -33,5 +33,5 @@
       "description": "Force re-authentication immediately without checking current token."
     }
   ],
-  "url": "http://zap.zicuro.shop:7860"
+  "url": "https://zap.zicuro.shop:7860"
 }
