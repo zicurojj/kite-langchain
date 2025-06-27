@@ -1,6 +1,6 @@
-flask
+fastapi
+uvicorn
 kiteconnect
 python-dotenv
+pydantic
 requests
-mcp
-fastmcp

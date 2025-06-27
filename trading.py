@@ -46,7 +46,7 @@ def get_authenticated_kite_client(force_auth=False):
         raise
     except Exception as e:
         print(f"❌ Error getting authenticated client: {e}")
-        print("💡 Run 'python auth_manager.py auth' to authenticate")
+        print("💡 Use get_kite_login_url() to authenticate")
         raise
 
 def ensure_authenticated():
@@ -63,7 +63,7 @@ try:
     kc = get_authenticated_kite_client()
     print("✅ Kite Connect client initialized successfully")
 except TokenExpiredException:
-    print("🔐 Authentication required. Run 'python auth_manager.py auth' when ready to trade.")
+    print("🔐 Authentication required. Use get_kite_login_url() when ready to trade.")
     kc = None
 except Exception as e:
     print(f"⚠️ Could not initialize Kite Connect client: {e}")
@@ -144,7 +144,7 @@ def place_order(tradingsymbol, quantity, transaction_type, exchange="NSE", produ
             return {
                 "status": "authentication_error",
                 "error": str(e),
-                "message": "Automatic authentication failed. Please check your configuration or try manually: 'python auth_manager.py auth'",
+                "message": "Automatic authentication failed. Please use get_kite_login_url() to authenticate.",
                 "action_required": "check_config"
             }
 
@@ -291,7 +291,7 @@ def place_order(tradingsymbol, quantity, transaction_type, exchange="NSE", produ
                 return {
                     "status": "authentication_error",
                     "error": str(auth_error),
-                    "message": f"Automatic re-authentication failed: {auth_error}. Please try manually: 'python auth_manager.py auth'",
+                    "message": f"Automatic re-authentication failed: {auth_error}. Please use get_kite_login_url() to authenticate.",
                     "action_required": "manual_auth"
                 }
 
@@ -387,7 +387,7 @@ def get_positions():
             print(get_auth_retry_message())
             kc = auth_manager.get_authenticated_client(auto_authenticate=True)
         except Exception as e:
-            return f"❌ Automatic authentication failed: {e}\n💡 Please try manually: 'python auth_manager.py auth'"
+            return f"❌ Automatic authentication failed: {e}\n💡 Please use get_kite_login_url() to authenticate"
 
     try:
         positions = kc.positions()
@@ -410,5 +410,5 @@ def get_positions():
                 else:
                     return "No positions found."
             except Exception as auth_error:
-                return f"❌ Automatic re-authentication failed: {auth_error}\n💡 Please try manually: 'python auth_manager.py auth'"
+                return f"❌ Automatic re-authentication failed: {auth_error}\n💡 Please use get_kite_login_url() to authenticate"
         return f"❌ Error fetching positions: {e}"

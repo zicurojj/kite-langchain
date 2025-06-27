@@ -74,8 +74,8 @@ class AutoAuthConfig:
                     "- KITE_REDIRECT_URL environment variable (optional)"
                 )
 
-            # Use localhost for automated capture
-            self.redirect_url = self.original_redirect_url or "http://localhost:8080/callback"
+            # Use localhost for automated capture (fallback only)
+            self.redirect_url = "http://localhost:8765/callback"  # For local automated auth only
 
             logger.info("✅ Configuration loaded successfully")
             logger.info(f"📋 API Key: {self.api_key[:8]}...")
@@ -332,10 +332,21 @@ class FullyAutomatedKiteAuth:
                 self.server_thread.join(timeout=5)
             logger.info("🛑 Auth server stopped")
     
-    def get_login_url(self):
-        """Generate Kite Connect login URL with localhost redirect"""
-        # Generate login URL with localhost redirect
-        login_url = f"https://kite.trade/connect/login?api_key={self.config.api_key}&redirect_url={self.config.redirect_url}"
+    def get_login_url(self, use_original_redirect=True):
+        """Generate Kite Connect login URL
+
+        Args:
+            use_original_redirect (bool): If True, use original redirect URL from config.
+                                        If False, use localhost redirect for automated auth.
+        """
+        if use_original_redirect and self.config.original_redirect_url:
+            # Use the original redirect URL for client authentication
+            redirect_url = self.config.original_redirect_url
+        else:
+            # Use localhost redirect for automated authentication
+            redirect_url = self.config.redirect_url
+
+        login_url = f"https://kite.trade/connect/login?api_key={self.config.api_key}&redirect_url={redirect_url}"
         return login_url
     
     def exchange_request_token(self, request_token):
@@ -506,7 +517,7 @@ class FullyAutomatedKiteAuth:
             return {
                 "status": "no_tokens",
                 "message": "No authentication tokens found",
-                "action_required": "Run 'python auth_manager.py auth' to authenticate"
+                "action_required": "Use get_kite_login_url() to authenticate"
             }
 
         # Safely check token validity
@@ -530,7 +541,7 @@ class FullyAutomatedKiteAuth:
                 "message": "Access token has expired or is invalid",
                 "expires_at": tokens.get('expires_at'),
                 "generated_at": tokens.get('generated_at'),
-                "action_required": "Run 'python auth_manager.py auth' to re-authenticate"
+                "action_required": "Use get_kite_login_url() to re-authenticate"
             }
 
     def get_authenticated_client(self, auto_authenticate=False):

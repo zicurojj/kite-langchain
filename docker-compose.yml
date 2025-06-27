@@ -1,19 +1,27 @@
 version: "3.8"
 
 services:
-  kite-mcp-server:
+  kite-droplet-server:
     build: .
-    container_name: kite_mcp_server
+    container_name: kite_droplet_server
     ports:
-      - "7860:7860"
-      - "5001:5001"
+      - "8080:8080"  # OAuth callback server
+      - "3000:3000"  # MCP server
     environment:
       - KITE_API_KEY=${KITE_API_KEY}
       - KITE_API_SECRET=${KITE_API_SECRET}
-      - KITE_REDIRECT_URL=${KITE_REDIRECT_URL:-http://localhost:8080/callback}
-      - DROPLET_URL=${DROPLET_URL:-http://localhost:5001/auth/exchange}
+      - KITE_REDIRECT_URL=${KITE_REDIRECT_URL:-https://zap.zicuro.shop/callback}
+      - DROPLET_CALLBACK_URL=${DROPLET_CALLBACK_URL:-http://localhost:8080}
+      - LOCAL_PORT=${LOCAL_PORT:-8765}
+      - MCP_SERVER_PORT=3000
+      - CALLBACK_SERVER_PORT=8080
       - DOCKER_ENV=true
     volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
+      - ./data:/app/data:rw
+      - ./logs:/app/logs:rw
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -f http://localhost:8080/health && curl -f http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
