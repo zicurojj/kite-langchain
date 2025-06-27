@@ -16,12 +16,13 @@ CALLBACK_PID=$!
 sleep 3
 
 # Check if callback server started successfully
-if ps -p $CALLBACK_PID > /dev/null; then
-    echo "✅ OAuth Callback Server started successfully (PID: $CALLBACK_PID)"
+if curl -s http://localhost:8080/health | grep -q "healthy"; then
+    echo "✅ Callback server is responding"
 else
-    echo "❌ Failed to start OAuth Callback Server"
+    echo "❌ Callback server did not respond"
     exit 1
 fi
+
 
 # Start the MCP server in the background
 echo "🤖 Starting MCP Server (port 3000)..."
