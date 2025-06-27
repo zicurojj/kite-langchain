@@ -80,6 +80,11 @@ class AutoAuthConfig:
             logger.info("✅ Configuration loaded successfully")
             logger.info(f"📋 API Key: {self.api_key[:8]}...")
             logger.info(f"🔗 Original Redirect: {self.original_redirect_url}")
+            logger.info(f"🔗 Localhost Redirect: {self.redirect_url}")
+
+            # Debug environment variables
+            logger.info(f"🔍 KITE_REDIRECT_URL env var: {os.getenv('KITE_REDIRECT_URL')}")
+            logger.info(f"🔍 KITE_API_KEY env var: {os.getenv('KITE_API_KEY', 'NOT_SET')[:8]}...")
 
         except Exception as e:
             logger.error(f"❌ Error loading config: {e}")
@@ -342,11 +347,19 @@ class FullyAutomatedKiteAuth:
         if use_original_redirect and self.config.original_redirect_url:
             # Use the original redirect URL for client authentication
             redirect_url = self.config.original_redirect_url
+            logger.info(f"🔗 Using original redirect URL: {redirect_url}")
         else:
             # Use localhost redirect for automated authentication
             redirect_url = self.config.redirect_url
+            logger.info(f"🔗 Using localhost redirect URL: {redirect_url}")
 
-        login_url = f"https://kite.trade/connect/login?api_key={self.config.api_key}&redirect_url={redirect_url}"
+        # Ensure we have a valid API key
+        if not self.config.api_key:
+            logger.error("❌ API key not found in configuration")
+            raise ValueError("API key not configured")
+
+        login_url = f"https://kite.trade/connect/login?api_key={self.config.api_key}&redirect_uri={redirect_url}"
+        logger.info(f"🔗 Generated login URL: {login_url}")
         return login_url
     
     def exchange_request_token(self, request_token):

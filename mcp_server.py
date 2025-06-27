@@ -82,7 +82,14 @@ def get_kite_login_url() -> str:
                    f"💡 Run: docker-compose up -d")
 
         # Use original redirect URL for client authentication (not localhost)
+        logger.info("🔗 Generating Kite Connect login URL...")
         url = auth_manager.get_login_url(use_original_redirect=True)
+        logger.info(f"🔗 Generated URL: {url}")
+
+        # Validate the URL contains the correct redirect
+        if "zap.zicuro.shop" not in url:
+            logger.warning(f"⚠️ Generated URL doesn't contain droplet domain: {url}")
+            logger.warning("⚠️ Check KITE_REDIRECT_URL environment variable")
 
         return (f"🔗 **Kite Connect Authentication Required**\n\n"
                 f"Click this link to login with your Zerodha credentials:\n\n"
@@ -90,7 +97,8 @@ def get_kite_login_url() -> str:
                 f"📱 This will open in your browser (any device/OS)\n"
                 f"🔐 After login, tokens will be automatically saved on the server\n"
                 f"✅ You'll then be ready to place trades through Claude!\n\n"
-                f"💡 The authentication is valid until the token expires.")
+                f"💡 The authentication is valid until the token expires.\n"
+                f"🔄 Callback URL: https://zap.zicuro.shop/callback")
 
     except Exception as e:
         logger.error(f"Error generating login URL: {e}")
