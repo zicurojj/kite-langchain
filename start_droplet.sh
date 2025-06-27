@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 echo "🚀 Starting Zerodha Kite Trading Services on Droplet..."
 echo "=================================================="
@@ -16,10 +17,10 @@ CALLBACK_PID=$!
 sleep 3
 
 # Check if callback server started successfully
-if ps -p $CALLBACK_PID > /dev/null; then
-    echo "✅ OAuth Callback Server started successfully (PID: $CALLBACK_PID)"
+if curl -s http://localhost:8080/health | grep -q "healthy"; then
+    echo "✅ Callback server is responding"
 else
-    echo "❌ Failed to start OAuth Callback Server"
+    echo "❌ Callback server did not respond"
     exit 1
 fi
 
@@ -32,7 +33,7 @@ MCP_PID=$!
 sleep 3
 
 # Check if MCP server started successfully
-if ps -p $MCP_PID > /dev/null; then
+if [ -e /proc/$MCP_PID ]; then
     echo "✅ MCP Server started successfully (PID: $MCP_PID)"
 else
     echo "❌ Failed to start MCP Server"
@@ -52,8 +53,8 @@ echo "=================================================="
 # Function to handle shutdown
 cleanup() {
     echo "🛑 Shutting down services..."
-    kill $CALLBACK_PID 2>/dev/null
-    kill $MCP_PID 2>/dev/null
+    kill $CALLBACK_PID 2>/dev/null || true
+    kill $MCP_PID 2>/dev/null || true
     echo "✅ Services stopped"
     exit 0
 }
@@ -63,18 +64,17 @@ trap cleanup SIGTERM SIGINT
 
 # Keep the script running and monitor processes
 while true; do
-    # Check if both processes are still running
-    if ! ps -p $CALLBACK_PID > /dev/null; then
+    if [ ! -e /proc/$CALLBACK_PID ]; then
         echo "❌ OAuth Callback Server died, restarting..."
         python3 /app/callback_server.py &
         CALLBACK_PID=$!
     fi
 
-    if ! ps -p $MCP_PID > /dev/null; then
+    if [ ! -e /proc/$MCP_PID ]; then
         echo "❌ MCP Server died, restarting..."
         python3 /app/mcp_server.py &
         MCP_PID=$!
     fi
-    
+
     sleep 30
 done
