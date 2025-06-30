@@ -305,16 +305,10 @@ async def mcp_sse_endpoint(request: Request):
             method = json_request.get("method")
             req_id = json_request.get("id")
 
-
-            method = json_request.get("method")
-            req_id = json_request.get("id")
-
             if method == "initialize":
                 result = {
                     "protocolVersion": "2025-06-18",
-                    "capabilities": {
-                        "tools": {}
-                    },
+                    "capabilities": {"tools": {}},
                     "serverInfo": {
                         "name": "zerodha-kite-trading",
                         "version": "1.0.0"
@@ -347,16 +341,15 @@ async def mcp_sse_endpoint(request: Request):
                     return
 
                 try:
-                    result = TOOLS[tool_name]["function"](**arguments) if arguments else TOOLS[tool_name]["function"]()
+                    output = TOOLS[tool_name]["function"](**arguments) if arguments else TOOLS[tool_name]["function"]()
+                    result = str(output)  # Ensure serializability
+
                     response = {
                         "jsonrpc": "2.0",
                         "id": req_id,
                         "result": {
                             "content": [
-                                {
-                                    "type": "text",
-                                    "text": result
-                                }
+                                {"type": "text", "text": result}
                             ]
                         }
                     }
@@ -371,9 +364,17 @@ async def mcp_sse_endpoint(request: Request):
                 yield f"data: {json.dumps({'jsonrpc': '2.0', 'id': req_id, 'error': error})}\n\n"
 
         except Exception as e:
-            yield f"data: {json.dumps({'jsonrpc': '2.0', 'id': None, 'error': {'code': -32603, 'message': 'Internal server error'}})}\n\n"
+            error = {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {
+                    "code": -32603,
+                    "message": f"Internal server error: {str(e)}"
+                }
+            }
+            yield f"data: {json.dumps(error)}\n\n"
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
 
 if __name__ == "__main__":
     logger.info("🚀 Starting Zerodha Kite MCP Server on droplet...")
