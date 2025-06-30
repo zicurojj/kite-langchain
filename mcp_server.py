@@ -289,31 +289,20 @@ def health():
     except Exception as e:
         return {"status": "healthy", "server": "mcp", "port": MCP_SERVER_PORT, "error": str(e)}
 
+from fastapi.responses import StreamingResponse
+
 @app.post("/mcp")
-async def mcp_endpoint(request: Request):
-    """Main MCP endpoint implementing Streamable HTTP transport"""
-    try:
-        # Parse JSON-RPC request
-        body = await request.body()
-        json_request = json.loads(body.decode())
+async def mcp_sse_endpoint(request: Request):
+    async def event_generator():
+        try:
+            body = await request.body()
+            json_request = json.loads(body.decode())
 
-        logger.info(f"Received MCP request: {json_request.get('method')} (ID: {json_request.get('id')})")
+            method = json_request.get("method")
+            req_id = json_request.get("id")
 
-        # Get or create session
-        session_id = request.headers.get("Mcp-Session-Id")
-        if not session_id and json_request.get("method") == "initialize":
-            session_id = str(uuid.uuid4())
-            sessions[session_id] = {"initialized": False}
-
-        # Handle different methods
-        if json_request.get("method") == "initialize":
-            # Handle initialization
-            sessions[session_id]["initialized"] = True
-
-            response = {
-                "jsonrpc": "2.0",
-                "id": json_request.get("id"),
-                "result": {
+            if method == "initialize":
+                result = {
                     "protocolVersion": "2025-06-18",
                     "capabilities": {
                         "tools": {}
@@ -323,122 +312,60 @@ async def mcp_endpoint(request: Request):
                         "version": "1.0.0"
                     }
                 }
-            }
+                yield f"data: {json.dumps({'jsonrpc': '2.0', 'id': req_id, 'result': result})}\n\n"
 
-            # Return response with session ID
-            json_response = JSONResponse(content=response)
-            json_response.headers["Mcp-Session-Id"] = session_id
-            return json_response
+            elif method == "tools/list":
+                tools = []
+                for name, info in TOOLS.items():
+                    tools.append({
+                        "name": name,
+                        "description": info["description"],
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": info["parameters"],
+                            "required": list(info["parameters"].keys()) if info["parameters"] else []
+                        }
+                    })
+                yield f"data: {json.dumps({'jsonrpc': '2.0', 'id': req_id, 'result': {'tools': tools}})}\n\n"
 
-        elif json_request.get("method") == "tools/list":
-            # Return available tools
-            tools = []
-            for name, info in TOOLS.items():
-                tools.append({
-                    "name": name,
-                    "description": info["description"],
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": info["parameters"],
-                        "required": list(info["parameters"].keys()) if info["parameters"] else []
+            elif method == "tools/call":
+                params = json_request.get("params", {})
+                tool_name = params.get("name")
+                arguments = params.get("arguments", {})
+
+                if tool_name not in TOOLS:
+                    error = {"code": -32601, "message": f"Tool '{tool_name}' not found"}
+                    yield f"data: {json.dumps({'jsonrpc': '2.0', 'id': req_id, 'error': error})}\n\n"
+                    return
+
+                try:
+                    result = TOOLS[tool_name]["function"](**arguments) if arguments else TOOLS[tool_name]["function"]()
+                    response = {
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": result
+                                }
+                            ]
+                        }
                     }
-                })
+                    yield f"data: {json.dumps(response)}\n\n"
 
-            response = {
-                "jsonrpc": "2.0",
-                "id": json_request.get("id"),
-                "result": {"tools": tools}
-            }
-            return JSONResponse(content=response)
+                except Exception as e:
+                    error = {"code": -32603, "message": f"Tool execution failed: {str(e)}"}
+                    yield f"data: {json.dumps({'jsonrpc': '2.0', 'id': req_id, 'error': error})}\n\n"
 
-        elif json_request.get("method") == "tools/call":
-            # Execute tool call
-            params = json_request.get("params", {})
-            if not params:
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": json_request.get("id"),
-                    "error": {"code": -32602, "message": "Missing params for tool call"}
-                }
-                return JSONResponse(content=response)
+            else:
+                error = {"code": -32601, "message": f"Method '{method}' not supported"}
+                yield f"data: {json.dumps({'jsonrpc': '2.0', 'id': req_id, 'error': error})}\n\n"
 
-            tool_name = params.get("name")
-            arguments = params.get("arguments", {})
+        except Exception as e:
+            yield f"data: {json.dumps({'jsonrpc': '2.0', 'id': None, 'error': {'code': -32603, 'message': 'Internal server error'}})}\n\n"
 
-            logger.info(f"Calling tool: {tool_name} with args: {arguments}")
-
-            if not tool_name:
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": json_request.get("id"),
-                    "error": {"code": -32602, "message": "Missing tool name"}
-                }
-                return JSONResponse(content=response)
-
-            if tool_name not in TOOLS:
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": json_request.get("id"),
-                    "error": {"code": -32601, "message": f"Tool '{tool_name}' not found"}
-                }
-                return JSONResponse(content=response)
-
-            # Call the tool function
-            tool_func = TOOLS[tool_name]["function"]
-            try:
-                if arguments:
-                    result = tool_func(**arguments)
-                else:
-                    result = tool_func()
-
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": json_request.get("id"),
-                    "result": {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": result
-                            }
-                        ]
-                    }
-                }
-                return JSONResponse(content=response)
-
-            except Exception as e:
-                logger.error(f"Tool execution error: {e}")
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": json_request.get("id"),
-                    "error": {"code": -32603, "message": f"Tool execution failed: {str(e)}"}
-                }
-                return JSONResponse(content=response)
-
-        else:
-            response = {
-                "jsonrpc": "2.0",
-                "id": json_request.get("id"),
-                "error": {"code": -32601, "message": f"Method '{json_request.get('method')}' not supported"}
-            }
-            return JSONResponse(content=response)
-
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON decode error: {e}")
-        response = {
-            "jsonrpc": "2.0",
-            "id": None,
-            "error": {"code": -32700, "message": "Parse error"}
-        }
-        return JSONResponse(content=response)
-
-    except Exception as e:
-        logger.error(f"MCP endpoint error: {e}")
-        response = {
-            "jsonrpc": "2.0",
-            "id": json_request.get("id") if 'json_request' in locals() else None,
-            "error": {"code": -32603, "message": f"Internal server error: {str(e)}"}
-        }
-        return JSONResponse(content=response)
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 if __name__ == "__main__":
     logger.info("🚀 Starting Zerodha Kite MCP Server on droplet...")
