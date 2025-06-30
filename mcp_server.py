@@ -290,13 +290,21 @@ def health():
         return {"status": "healthy", "server": "mcp", "port": MCP_SERVER_PORT, "error": str(e)}
 
 from fastapi.responses import StreamingResponse
+from urllib.parse import unquote
 
 @app.get("/mcp")
 async def mcp_sse_endpoint(request: Request):
     async def event_generator():
         try:
-            body = await request.body()
-            json_request = json.loads(body.decode())
+            payload = request.query_params.get("payload")
+            if not payload:
+                yield "data: {}\n\n"
+                return
+
+            json_request = json.loads(unquote(payload))
+            method = json_request.get("method")
+            req_id = json_request.get("id")
+
 
             method = json_request.get("method")
             req_id = json_request.get("id")
