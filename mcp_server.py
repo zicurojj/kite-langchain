@@ -291,7 +291,7 @@ def health():
 
 from fastapi.responses import StreamingResponse
 
-@app.post("/mcp")
+@app.get("/mcp")
 async def mcp_sse_endpoint(request: Request):
     async def event_generator():
         try:
