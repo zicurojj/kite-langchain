@@ -310,7 +310,8 @@ async def mcp_sse_endpoint(request: Request):
                     "protocolVersion": "2025-06-18",
                     "capabilities": {"tools": {}},
                     "serverInfo": {
-                        "name": "zerodha-kite-trading",
+                        "name": "zerodha-kit"
+                        "e-trading",
                         "version": "1.0.0"
                     }
                 }
