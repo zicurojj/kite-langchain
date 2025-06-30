@@ -1,11 +1,19 @@
 
-# trading.py
+#!/usr/bin/env python3
+"""
+Trading functions for Zerodha Kite Connect
+Handles order placement and portfolio management
+"""
 from logger import log_order_success, log_order_rejection, log_order_error, log_order_placed_but_rejected
 from datetime import datetime
 import json
 import time
 from auth_fully_automated import FullyAutomatedKiteAuth, TokenExpiredException
 from auth_utils import get_auth_retry_message, get_manual_auth_instructions, is_token_expired_error
+import logging
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Initialize authentication manager
 auth_manager = FullyAutomatedKiteAuth()
@@ -25,12 +33,12 @@ def get_authenticated_kite_client(force_auth=False):
     try:
         if force_auth:
             # Force re-authentication - always get fresh token
-            print("🔄 Forcing re-authentication...")
-            print("💡 This will replace any existing token with a fresh one")
+            logger.info("🔄 Forcing re-authentication...")
+            logger.info("💡 This will replace any existing token with a fresh one")
             access_token = auth_manager.authenticate_fully_automated(force=True)
             if access_token:
                 kc = auth_manager.kc
-                print("✅ Force re-authentication successful!")
+                logger.info("✅ Force re-authentication successful!")
                 return kc
             else:
                 raise Exception("Force authentication failed")
@@ -41,12 +49,12 @@ def get_authenticated_kite_client(force_auth=False):
 
     except TokenExpiredException as e:
         # Token expired - inform user but don't auto-authenticate
-        print(f"🔐 {e}")
-        print(get_manual_auth_instructions())
+        logger.warning(f"🔐 {e}")
+        logger.info(get_manual_auth_instructions())
         raise
     except Exception as e:
-        print(f"❌ Error getting authenticated client: {e}")
-        print("💡 Use get_kite_login_url() to authenticate")
+        logger.error(f"❌ Error getting authenticated client: {e}")
+        logger.info("💡 Use get_kite_login_url() to authenticate")
         raise
 
 def ensure_authenticated():

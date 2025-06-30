@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
 MCP Server for Zerodha Kite Connect Trading - Droplet Deployment
-Runs on droplet and serves MCP over HTTP for Claude Desktop
+Runs on droplet and serves MCP over Streamable HTTP for Claude Desktop
 """
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from typing import Dict, Any
+from fastapi.responses import JSONResponse, StreamingResponse
+
 from trading import place_order, get_positions
 from auth_fully_automated import FullyAutomatedKiteAuth
 from datetime import datetime
+import asyncio
 import json
 import logging
 import os
@@ -22,7 +23,7 @@ import uuid
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app for MCP-over-HTTP
+# Initialize FastAPI app for MCP server
 app = FastAPI(title="Zerodha Kite MCP Server")
 
 # Add CORS middleware for Claude Desktop
@@ -40,17 +41,12 @@ auth_manager = FullyAutomatedKiteAuth()
 # Server configuration
 MCP_SERVER_PORT = int(os.getenv('MCP_SERVER_PORT', '3000'))
 CALLBACK_SERVER_PORT = int(os.getenv('CALLBACK_SERVER_PORT', '8080'))
-DROPLET_CALLBACK_URL = os.getenv('DROPLET_CALLBACK_URL', f"http://localhost:{CALLBACK_SERVER_PORT}")
+DROPLET_CALLBACK_URL = os.getenv('DROPLET_CALLBACK_URL', f"https://zap.zicuro.shop:{CALLBACK_SERVER_PORT}")
 
 # Session management
 sessions = {}  # Store session data
 
-# Session management helper
-def get_session(session_id: str) -> Dict[str, Any]:
-    """Get or create session data"""
-    if session_id not in sessions:
-        sessions[session_id] = {"initialized": False}
-    return sessions[session_id]
+
 
 def ensure_callback_server():
     """Ensure the callback server is running for OAuth handling"""
@@ -289,32 +285,213 @@ def health():
     except Exception as e:
         return {"status": "healthy", "server": "mcp", "port": MCP_SERVER_PORT, "error": str(e)}
 
-from fastapi.responses import StreamingResponse
-from urllib.parse import unquote
+# Session management for Streamable HTTP
+sessions = {}  # session_id -> session_data
+pending_sse_streams = {}  # session_id -> response_queue
+
+@app.post("/mcp")
+async def mcp_streamable_http_endpoint(request: Request):
+    """Streamable HTTP endpoint for Claude Desktop MCP communication"""
+    try:
+        # Parse JSON-RPC request
+        body = await request.body()
+        json_request = json.loads(body.decode())
+
+        # Get or create session
+        session_id = request.headers.get("Mcp-Session-Id")
+        if not session_id and json_request.get("method") == "initialize":
+            session_id = str(uuid.uuid4())
+            sessions[session_id] = {"initialized": False}
+
+        logger.info(f"Received MCP request: {json_request.get('method')} (ID: {json_request.get('id')}) Session: {session_id}")
+
+        # Process the request
+        response = await process_mcp_request(json_request, session_id)
+
+        # Check if client accepts SSE streaming
+        accept_header = request.headers.get("Accept", "")
+        supports_sse = "text/event-stream" in accept_header
+
+        # For certain operations, we might want to stream responses
+        should_stream = (
+            json_request.get("method") in ["tools/call"] and
+            supports_sse and
+            json_request.get("params", {}).get("name") in ["get_portfolio", "check_authentication_status"]
+        )
+
+        if should_stream:
+            # Return SSE stream for real-time updates
+            return StreamingResponse(
+                generate_sse_response(response, session_id),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Headers": "*",
+                    "Mcp-Session-Id": session_id or "",
+                }
+            )
+        else:
+            # Return single JSON response
+            json_response = JSONResponse(content=response)
+            if session_id:
+                json_response.headers["Mcp-Session-Id"] = session_id
+            return json_response
+
+    except Exception as e:
+        logger.error(f"MCP Streamable HTTP error: {e}")
+        error_response = {
+            "jsonrpc": "2.0",
+            "id": json_request.get("id") if 'json_request' in locals() else None,
+            "error": {"code": -32603, "message": f"Server error: {str(e)}"}
+        }
+        return JSONResponse(content=error_response, status_code=500)
 
 @app.get("/mcp")
-async def mcp_sse_endpoint(request: Request):
-    async def event_generator():
-        try:
-            payload = request.query_params.get("payload")
-            if not payload:
-                error = {
-                    "jsonrpc": "2.0",
-                    "id": req_id,
-                    "error": {
-                        "code": -32600,
-                        "message": "Missing payload in request"
+async def mcp_sse_stream_endpoint(request: Request):
+    """Optional SSE stream endpoint for server-initiated messages"""
+    session_id = request.headers.get("Mcp-Session-Id")
+
+    if not session_id:
+        return JSONResponse(
+            content={"error": "Session ID required for SSE stream"},
+            status_code=400
+        )
+
+    logger.info(f"🔗 Starting SSE stream for session: {session_id}")
+
+    return StreamingResponse(
+        generate_server_events(session_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
+
+async def generate_sse_response(response: dict, session_id: str):
+    """Generate SSE stream for a single response"""
+    try:
+        # Send the main response
+        yield f"data: {json.dumps(response)}\n\n"
+
+        # For certain tool calls, we might send additional updates
+        if (response.get("result", {}).get("content") and
+            isinstance(response["result"]["content"], list) and
+            len(response["result"]["content"]) > 0):
+
+            # Send completion event
+            completion_event = {
+                "type": "completion",
+                "session_id": session_id,
+                "timestamp": datetime.now().isoformat()
+            }
+            yield f"event: completion\ndata: {json.dumps(completion_event)}\n\n"
+
+    except Exception as e:
+        logger.error(f"SSE response generation error: {e}")
+        error_event = {
+            "type": "error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+        yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+
+async def generate_server_events(session_id: str):
+    """Generate server-initiated SSE events"""
+    try:
+        # Send connection confirmation
+        connection_event = {
+            "type": "connection",
+            "session_id": session_id,
+            "timestamp": datetime.now().isoformat()
+        }
+        yield f"event: connection\ndata: {json.dumps(connection_event)}\n\n"
+
+        # Keep connection alive and send periodic updates
+        while True:
+            try:
+                # Check for any pending events for this session
+                if session_id in pending_sse_streams:
+                    queue = pending_sse_streams[session_id]
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                        yield f"event: {event['type']}\ndata: {json.dumps(event['data'])}\n\n"
+                    except asyncio.TimeoutError:
+                        # Send keepalive
+                        keepalive_event = {
+                            "type": "keepalive",
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        yield f"event: keepalive\ndata: {json.dumps(keepalive_event)}\n\n"
+                else:
+                    # No queue for this session, just send keepalive
+                    await asyncio.sleep(30)
+                    keepalive_event = {
+                        "type": "keepalive",
+                        "timestamp": datetime.now().isoformat()
                     }
-                }
-                yield f"data: {json.dumps(error)}\n\n"
-                return
+                    yield f"event: keepalive\ndata: {json.dumps(keepalive_event)}\n\n"
 
-            json_request = json.loads(unquote(payload))
-            method = json_request.get("method")
-            req_id = json_request.get("id")
+            except asyncio.CancelledError:
+                logger.info(f"🔌 SSE stream cancelled for session: {session_id}")
+                break
 
-            if method == "initialize":
-                result = {
+    except Exception as e:
+        logger.error(f"❌ SSE server events error for session {session_id}: {e}")
+        error_event = {
+            "type": "error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+        yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+    finally:
+        # Cleanup
+        if session_id in pending_sse_streams:
+            del pending_sse_streams[session_id]
+
+@app.delete("/mcp")
+async def mcp_session_cleanup(request: Request):
+    """Handle session termination as per MCP Streamable HTTP specification"""
+    session_id = request.headers.get("Mcp-Session-Id")
+
+    if not session_id:
+        return JSONResponse(
+            content={"error": "Session ID required for cleanup"},
+            status_code=400
+        )
+
+    # Cleanup session data
+    if session_id in sessions:
+        del sessions[session_id]
+        logger.info(f"🗑️ Cleaned up session: {session_id}")
+
+    if session_id in pending_sse_streams:
+        del pending_sse_streams[session_id]
+        logger.info(f"🗑️ Cleaned up SSE stream for session: {session_id}")
+
+    return JSONResponse(content={"status": "session_terminated", "session_id": session_id})
+
+
+
+async def process_mcp_request(json_request: dict, session_id: str) -> dict:
+    """Process MCP request and return response"""
+    try:
+        method = json_request.get("method")
+        request_id = json_request.get("id")
+        params = json_request.get("params", {})
+
+        if method == "initialize":
+            # Handle initialization
+            sessions[session_id] = {"initialized": True}
+
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
                     "protocolVersion": "2025-06-18",
                     "capabilities": {"tools": {}},
                     "serverInfo": {
@@ -322,72 +499,84 @@ async def mcp_sse_endpoint(request: Request):
                         "version": "1.0.0"
                     }
                 }
-                yield f"data: {json.dumps({'jsonrpc': '2.0', 'id': req_id, 'result': result})}\n\n"
-
-            elif method == "tools/list":
-                tools = []
-                for name, info in TOOLS.items():
-                    tools.append({
-                        "name": name,
-                        "description": info["description"],
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": info["parameters"],
-                            "required": list(info["parameters"].keys()) if info["parameters"] else []
-                        }
-                    })
-                yield f"data: {json.dumps({'jsonrpc': '2.0', 'id': req_id, 'result': {'tools': tools}})}\n\n"
-
-            elif method == "tools/call":
-                params = json_request.get("params", {})
-                tool_name = params.get("name")
-                arguments = params.get("arguments", {})
-
-                if tool_name not in TOOLS:
-                    error = {"code": -32601, "message": f"Tool '{tool_name}' not found"}
-                    yield f"data: {json.dumps({'jsonrpc': '2.0', 'id': req_id, 'error': error})}\n\n"
-                    return
-
-                try:
-                    output = TOOLS[tool_name]["function"](**arguments) if arguments else TOOLS[tool_name]["function"]()
-                    result = str(output)  # Ensure serializability
-
-                    response = {
-                        "jsonrpc": "2.0",
-                        "id": req_id,
-                        "result": {
-                            "content": [
-                                {"type": "text", "text": result}
-                            ]
-                        }
-                    }
-                    yield f"data: {json.dumps(response)}\n\n"
-
-                except Exception as e:
-                    error = {"code": -32603, "message": f"Tool execution failed: {str(e)}"}
-                    yield f"data: {json.dumps({'jsonrpc': '2.0', 'id': req_id, 'error': error})}\n\n"
-
-            else:
-                error = {"code": -32601, "message": f"Method '{method}' not supported"}
-                yield f"data: {json.dumps({'jsonrpc': '2.0', 'id': req_id, 'error': error})}\n\n"
-
-        except Exception as e:
-            error = {
-                "jsonrpc": "2.0",
-                "id": req_id if 'req_id' in locals() else None,
-                "error": {
-                    "code": -32603,
-                    "message": f"Internal server error: {str(e)}"
-                }
             }
-            yield f"data: {json.dumps(error)}\n\n"
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
+        elif method == "tools/list":
+            # Return available tools
+            tools = []
+            for name, info in TOOLS.items():
+                tools.append({
+                    "name": name,
+                    "description": info["description"],
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": info["parameters"],
+                        "required": list(info["parameters"].keys()) if info["parameters"] else []
+                    }
+                })
+
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {"tools": tools}
+            }
+
+        elif method == "tools/call":
+            # Execute tool call
+            tool_name = params.get("name")
+            arguments = params.get("arguments", {})
+
+            if not tool_name or tool_name not in TOOLS:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {"code": -32601, "message": f"Tool '{tool_name}' not found"}
+                }
+
+            # Execute the tool
+            tool_func = TOOLS[tool_name]["function"]
+            try:
+                if arguments:
+                    result = tool_func(**arguments)
+                else:
+                    result = tool_func()
+
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {
+                        "content": [{"type": "text", "text": str(result)}]
+                    }
+                }
+            except Exception as e:
+                logger.error(f"Tool execution error: {e}")
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {"code": -32603, "message": f"Tool execution failed: {str(e)}"}
+                }
+
+        else:
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32601, "message": f"Method '{method}' not supported"}
+            }
+
+    except Exception as e:
+        logger.error(f"MCP processing error: {e}")
+        return {
+            "jsonrpc": "2.0",
+            "id": json_request.get("id"),
+            "error": {"code": -32603, "message": f"Internal server error: {str(e)}"}
+        }
 
 if __name__ == "__main__":
-    logger.info("🚀 Starting Zerodha Kite MCP Server on droplet...")
+    logger.info("🚀 Starting Zerodha Kite MCP Server with Streamable HTTP support...")
     logger.info(f"🌐 MCP Server will run on port {MCP_SERVER_PORT}")
-    logger.info(f"🔗 Claude Desktop should connect to: https://zap.zicuro.shop:{MCP_SERVER_PORT}/mcp")
+    logger.info(f"🔗 Claude Desktop Streamable HTTP endpoint: https://zap.zicuro.shop:{MCP_SERVER_PORT}/mcp")
+    logger.info(f"📡 Authentication stays HTTP - Callback server on port {CALLBACK_SERVER_PORT}")
+    logger.info(f"🎯 Transport: Streamable HTTP (HTTP POST + Optional SSE streaming)")
 
     # Run the FastAPI server
     uvicorn.run(app, host="0.0.0.0", port=MCP_SERVER_PORT)

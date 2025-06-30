@@ -44,9 +44,9 @@ fi
 
 echo "=================================================="
 echo "✅ All services are running on droplet!"
-echo "🌐 OAuth Callback Server: http://0.0.0.0:8080"
-echo "🤖 MCP Server: http://0.0.0.0:3000"
-echo "🔗 Callback URL: https://zap.zicuro.shop/callback"
+echo "🌐 OAuth Callback Server (Internal): http://0.0.0.0:8080"
+echo "🤖 MCP Server (Internal): http://0.0.0.0:3000"
+echo "🔗 External Callback URL: https://zap.zicuro.shop/callback"
 echo "🔗 Claude Desktop URL: https://zap.zicuro.shop:3000/mcp"
 echo "📁 Token storage: /app/data/kite_tokens.json"
 echo "=================================================="

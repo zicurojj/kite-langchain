@@ -1,5 +1,9 @@
 
-# logger.py
+#!/usr/bin/env python3
+"""
+Order logging utilities for trading operations
+Provides structured logging for order placement, success, and failures
+"""
 from typing import Optional
 import os
 
