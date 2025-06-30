@@ -288,6 +288,19 @@ def health():
 # Session management for Streamable HTTP
 sessions = {}  # session_id -> session_data
 pending_sse_streams = {}  # session_id -> response_queue
+active_sse_connections = {}  # session_id -> connection_info
+
+def _get_connection_duration(session_id: str) -> str:
+    """Get connection duration for a session"""
+    if session_id in active_sse_connections:
+        connected_at = active_sse_connections[session_id]["connected_at"]
+        try:
+            connected_time = datetime.fromisoformat(connected_at)
+            duration = datetime.now() - connected_time
+            return str(duration.total_seconds())
+        except Exception:
+            return "unknown"
+    return "unknown"
 
 @app.post("/mcp")
 async def mcp_streamable_http_endpoint(request: Request):
@@ -350,14 +363,40 @@ async def mcp_streamable_http_endpoint(request: Request):
 
 @app.get("/mcp")
 async def mcp_sse_stream_endpoint(request: Request):
-    """Optional SSE stream endpoint for server-initiated messages"""
-    session_id = request.headers.get("Mcp-Session-Id")
+    """SSE stream endpoint for server-initiated messages with session management"""
+    # Try to get session ID from multiple sources
+    session_id = (
+        request.headers.get("Mcp-Session-Id") or
+        request.headers.get("X-Session-Id") or
+        request.query_params.get("session_id")
+    )
 
+    # Generate new session if none provided
     if not session_id:
-        return JSONResponse(
-            content={"error": "Session ID required for SSE stream"},
-            status_code=400
-        )
+        session_id = str(uuid.uuid4())
+        logger.info(f"🆕 Generated new session ID for SSE: {session_id}")
+    else:
+        logger.info(f"🔗 Using existing session ID for SSE: {session_id}")
+
+    # Ensure session exists
+    if session_id not in sessions:
+        sessions[session_id] = {
+            "initialized": False,
+            "created_at": datetime.now().isoformat(),
+            "sse_connected": True
+        }
+    else:
+        sessions[session_id]["sse_connected"] = True
+
+    # Create response queue for this session if it doesn't exist
+    if session_id not in pending_sse_streams:
+        pending_sse_streams[session_id] = asyncio.Queue()
+
+    # Track active SSE connection
+    active_sse_connections[session_id] = {
+        "connected_at": datetime.now().isoformat(),
+        "client_ip": request.client.host if request.client else "unknown"
+    }
 
     logger.info(f"🔗 Starting SSE stream for session: {session_id}")
 
@@ -369,47 +408,70 @@ async def mcp_sse_stream_endpoint(request: Request):
             "Connection": "keep-alive",
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Headers": "*",
+            "Mcp-Session-Id": session_id,  # Return session ID to client
         }
     )
 
 async def generate_sse_response(response: dict, session_id: str):
-    """Generate SSE stream for a single response"""
+    """Generate SSE stream for a single response with session context"""
     try:
-        # Send the main response
-        yield f"data: {json.dumps(response)}\n\n"
+        # Add session context to response
+        enhanced_response = {
+            **response,
+            "session_id": session_id,
+            "timestamp": datetime.now().isoformat()
+        }
+
+        # Send the main response with session ID
+        yield f"id: {uuid.uuid4()}\n"
+        yield f"event: response\n"
+        yield f"data: {json.dumps(enhanced_response)}\n\n"
 
         # For certain tool calls, we might send additional updates
         if (response.get("result", {}).get("content") and
             isinstance(response["result"]["content"], list) and
             len(response["result"]["content"]) > 0):
 
-            # Send completion event
+            # Send completion event with session context
             completion_event = {
                 "type": "completion",
                 "session_id": session_id,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "request_id": response.get("id")
             }
-            yield f"event: completion\ndata: {json.dumps(completion_event)}\n\n"
+            yield f"id: {uuid.uuid4()}\n"
+            yield f"event: completion\n"
+            yield f"data: {json.dumps(completion_event)}\n\n"
 
     except Exception as e:
-        logger.error(f"SSE response generation error: {e}")
+        logger.error(f"SSE response generation error for session {session_id}: {e}")
         error_event = {
             "type": "error",
-            "error": str(e),
+            "session_id": session_id,
+            "error": "Response generation failed",
             "timestamp": datetime.now().isoformat()
         }
-        yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+        yield f"id: {uuid.uuid4()}\n"
+        yield f"event: error\n"
+        yield f"data: {json.dumps(error_event)}\n\n"
 
 async def generate_server_events(session_id: str):
-    """Generate server-initiated SSE events"""
+    """Generate server-initiated SSE events with comprehensive session management"""
     try:
-        # Send connection confirmation
+        # Send connection confirmation with session details
         connection_event = {
             "type": "connection",
             "session_id": session_id,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "server_info": {
+                "name": "zerodha-kite-trading",
+                "version": "1.0.0",
+                "transport": "streamable-http"
+            }
         }
-        yield f"event: connection\ndata: {json.dumps(connection_event)}\n\n"
+        yield f"id: {uuid.uuid4()}\n"
+        yield f"event: connection\n"
+        yield f"data: {json.dumps(connection_event)}\n\n"
 
         # Keep connection alive and send periodic updates
         while True:
@@ -419,22 +481,38 @@ async def generate_server_events(session_id: str):
                     queue = pending_sse_streams[session_id]
                     try:
                         event = await asyncio.wait_for(queue.get(), timeout=30.0)
-                        yield f"event: {event['type']}\ndata: {json.dumps(event['data'])}\n\n"
-                    except asyncio.TimeoutError:
-                        # Send keepalive
-                        keepalive_event = {
-                            "type": "keepalive",
+                        # Add session context to all events
+                        enhanced_event = {
+                            **event,
+                            "session_id": session_id,
                             "timestamp": datetime.now().isoformat()
                         }
-                        yield f"event: keepalive\ndata: {json.dumps(keepalive_event)}\n\n"
+                        yield f"id: {uuid.uuid4()}\n"
+                        yield f"event: {event.get('type', 'message')}\n"
+                        yield f"data: {json.dumps(enhanced_event)}\n\n"
+                    except asyncio.TimeoutError:
+                        # Send keepalive with session context
+                        keepalive_event = {
+                            "type": "keepalive",
+                            "session_id": session_id,
+                            "timestamp": datetime.now().isoformat(),
+                            "connection_duration": _get_connection_duration(session_id)
+                        }
+                        yield f"id: {uuid.uuid4()}\n"
+                        yield f"event: keepalive\n"
+                        yield f"data: {json.dumps(keepalive_event)}\n\n"
                 else:
                     # No queue for this session, just send keepalive
                     await asyncio.sleep(30)
                     keepalive_event = {
                         "type": "keepalive",
-                        "timestamp": datetime.now().isoformat()
+                        "session_id": session_id,
+                        "timestamp": datetime.now().isoformat(),
+                        "connection_duration": _get_connection_duration(session_id)
                     }
-                    yield f"event: keepalive\ndata: {json.dumps(keepalive_event)}\n\n"
+                    yield f"id: {uuid.uuid4()}\n"
+                    yield f"event: keepalive\n"
+                    yield f"data: {json.dumps(keepalive_event)}\n\n"
 
             except asyncio.CancelledError:
                 logger.info(f"🔌 SSE stream cancelled for session: {session_id}")
@@ -449,14 +527,23 @@ async def generate_server_events(session_id: str):
         }
         yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
     finally:
-        # Cleanup
+        # Cleanup session data
         if session_id in pending_sse_streams:
             del pending_sse_streams[session_id]
+            logger.info(f"🗑️ Cleaned up SSE queue for session: {session_id}")
+
+        if session_id in active_sse_connections:
+            del active_sse_connections[session_id]
+            logger.info(f"🗑️ Cleaned up SSE connection tracking for session: {session_id}")
+
+        if session_id in sessions:
+            sessions[session_id]["sse_connected"] = False
+            logger.info(f"🔌 Marked SSE as disconnected for session: {session_id}")
 
 @app.delete("/mcp")
 async def mcp_session_cleanup(request: Request):
     """Handle session termination as per MCP Streamable HTTP specification"""
-    session_id = request.headers.get("Mcp-Session-Id")
+    session_id = request.headers.get("Mcp-Session-Id") or request.headers.get("X-Session-Id")
 
     if not session_id:
         return JSONResponse(
@@ -464,16 +551,48 @@ async def mcp_session_cleanup(request: Request):
             status_code=400
         )
 
+    cleanup_count = 0
+
     # Cleanup session data
     if session_id in sessions:
         del sessions[session_id]
-        logger.info(f"🗑️ Cleaned up session: {session_id}")
+        cleanup_count += 1
+        logger.info(f"🗑️ Cleaned up session data: {session_id}")
 
     if session_id in pending_sse_streams:
         del pending_sse_streams[session_id]
-        logger.info(f"🗑️ Cleaned up SSE stream for session: {session_id}")
+        cleanup_count += 1
+        logger.info(f"🗑️ Cleaned up SSE stream queue: {session_id}")
 
-    return JSONResponse(content={"status": "session_terminated", "session_id": session_id})
+    if session_id in active_sse_connections:
+        del active_sse_connections[session_id]
+        cleanup_count += 1
+        logger.info(f"🗑️ Cleaned up SSE connection tracking: {session_id}")
+
+    return JSONResponse(content={
+        "status": "session_terminated",
+        "session_id": session_id,
+        "cleanup_count": cleanup_count,
+        "timestamp": datetime.now().isoformat()
+    })
+
+@app.get("/sessions")
+async def get_session_status():
+    """Get current session status for debugging"""
+    return JSONResponse(content={
+        "active_sessions": len(sessions),
+        "active_sse_streams": len(pending_sse_streams),
+        "active_sse_connections": len(active_sse_connections),
+        "sessions": {
+            session_id: {
+                **session_data,
+                "has_sse_queue": session_id in pending_sse_streams,
+                "has_sse_connection": session_id in active_sse_connections
+            }
+            for session_id, session_data in sessions.items()
+        },
+        "timestamp": datetime.now().isoformat()
+    })
 
 
 
