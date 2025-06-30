@@ -298,7 +298,15 @@ async def mcp_sse_endpoint(request: Request):
         try:
             payload = request.query_params.get("payload")
             if not payload:
-                yield "data: {}\n\n"
+                error = {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {
+                        "code": -32600,
+                        "message": "Missing payload in request"
+                    }
+                }
+                yield f"data: {json.dumps(error)}\n\n"
                 return
 
             json_request = json.loads(unquote(payload))
@@ -366,7 +374,7 @@ async def mcp_sse_endpoint(request: Request):
         except Exception as e:
             error = {
                 "jsonrpc": "2.0",
-                "id": req_id,
+                "id": req_id if 'req_id' in locals() else None,
                 "error": {
                     "code": -32603,
                     "message": f"Internal server error: {str(e)}"
