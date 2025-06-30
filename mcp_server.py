@@ -300,7 +300,7 @@ async def mcp_sse_endpoint(request: Request):
             if not payload:
                 error = {
                     "jsonrpc": "2.0",
-                    "id": None,
+                    "id": req_id,
                     "error": {
                         "code": -32600,
                         "message": "Missing payload in request"
