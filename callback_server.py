@@ -116,14 +116,14 @@ def handle_callback(request_token: str = None):
             
     except Exception as e:
         logger.error(f"❌ Callback processing error: {e}")
-        return HTMLResponse(content=f"""
+        return HTMLResponse(content="""
         <html>
         <head><title>Authentication Error</title></head>
         <body style="font-family: Arial; text-align: center; margin-top: 50px;">
             <h2>❌ Authentication Error</h2>
-            <p>An error occurred during authentication:</p>
-            <p style="color: red; font-family: monospace;">{str(e)}</p>
+            <p>An unexpected error occurred during authentication.</p>
             <p>Please try the authentication process again.</p>
+            <p>If the issue persists, please check the server logs.</p>
         </body>
         </html>
         """, status_code=500)

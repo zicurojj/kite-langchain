@@ -34,10 +34,10 @@ MCP_PID=$!
 sleep 3
 
 # Check if MCP server started successfully
-if [ -e /proc/$MCP_PID ]; then
-    echo "✅ MCP Server started successfully (PID: $MCP_PID)"
+if curl -s http://localhost:3000/health | grep -q "healthy"; then
+    echo "✅ MCP Server is responding (PID: $MCP_PID)"
 else
-    echo "❌ Failed to start MCP Server"
+    echo "❌ MCP Server did not respond"
     kill $CALLBACK_PID 2>/dev/null
     exit 1
 fi

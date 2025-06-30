@@ -316,7 +316,7 @@ async def mcp_streamable_http_endpoint(request: Request):
         should_stream = (
             json_request.get("method") in ["tools/call"] and
             supports_sse and
-            json_request.get("params", {}).get("name") in ["get_portfolio", "check_authentication_status"]
+            json_request.get("params", {}).get("name") in ["show_portfolio", "check_authentication_status"]
         )
 
         if should_stream:
