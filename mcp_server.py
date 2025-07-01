@@ -234,7 +234,7 @@ TOOLS = {
             },
             "required": ["stock", "qty"]
         }
-    },
+    },  
     "sell_stock": {
         "function": sell_stock,
         "description": "Sell shares of a stock",
