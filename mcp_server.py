@@ -216,12 +216,20 @@ TOOLS = {
     "get_kite_login_url": {
         "function": get_kite_login_url,
         "description": "Get Kite Connect login URL for authentication",
-        "parameters": {}
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
     },
     "check_authentication_status": {
         "function": check_authentication_status,
         "description": "Check current authentication status",
-        "parameters": {}
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
     },
     "buy_stock": {
         "function": buy_stock,
@@ -250,12 +258,20 @@ TOOLS = {
     "show_portfolio": {
         "function": show_portfolio,
         "description": "Show current portfolio positions and holdings",
-        "parameters": {}
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
     },
     "server_health_check": {
         "function": server_health_check,
         "description": "Check server health and authentication status",
-        "parameters": {}
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
     }
 }
 
@@ -301,6 +317,10 @@ async def process_mcp_request(json_request: dict, session_id: str = None) -> dic
                 }
             }
 
+        elif method == "notifications/initialized":
+            # Notifications don't require a response - just return None
+            return None    
+
         elif method == "tools/list":
             # Return available tools
             tools = []
@@ -308,11 +328,7 @@ async def process_mcp_request(json_request: dict, session_id: str = None) -> dic
                 tools.append({
                     "name": name,
                     "description": info["description"],
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": info["parameters"],
-                        "required": list(info["parameters"].keys()) if info["parameters"] else []
-                    }
+                    "inputSchema": info["parameters"]
                 })
 
             return {
@@ -382,10 +398,12 @@ async def mcp_endpoint(request: Request):
 
         logger.info(f"Received MCP request: {json_request.get('method')} (ID: {json_request.get('id')})")
 
-        # Process the request without session management
-        response = await process_mcp_request(json_request, session_id=None)
+        # Process the request
+        response = await process_mcp_request(json_request)
 
-        # Return simple JSON response
+        if response is None:
+            return JSONResponse(content={}, status_code=204)  # No Content
+        
         return JSONResponse(content=response)
 
     except json.JSONDecodeError as e:
@@ -403,7 +421,7 @@ async def mcp_endpoint(request: Request):
         return JSONResponse(
             content={
                 "jsonrpc": "2.0",
-                "id": json_request.get("id") if 'json_request' in locals() else None,
+                "id": json_request.get("id", "error") if 'json_request' in locals() else "error",
                 "error": {"code": -32603, "message": f"Server error: {str(e)}"}
             },
             status_code=500
