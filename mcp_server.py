@@ -227,16 +227,24 @@ TOOLS = {
         "function": buy_stock,
         "description": "Buy shares of a stock",
         "parameters": {
-            "stock": {"type": "string", "description": "Trading symbol (e.g., 'RELIANCE', 'TCS')"},
-            "qty": {"type": "integer", "description": "Number of shares to buy"}
+            "type": "object",
+            "properties": {
+                "stock": {"type": "string", "description": "Trading symbol"},
+                "qty": {"type": "integer", "description": "Number of shares"}
+            },
+            "required": ["stock", "qty"]
         }
     },
     "sell_stock": {
         "function": sell_stock,
         "description": "Sell shares of a stock",
         "parameters": {
-            "stock": {"type": "string", "description": "Trading symbol (e.g., 'RELIANCE', 'TCS')"},
-            "qty": {"type": "integer", "description": "Number of shares to sell"}
+            "type": "object",
+            "properties": {
+                "stock": {"type": "string", "description": "Trading symbol"},
+                "qty": {"type": "integer", "description": "Number of shares"}
+            },
+            "required": ["stock", "qty"]
         }
     },
     "show_portfolio": {
@@ -400,12 +408,6 @@ async def mcp_endpoint(request: Request):
             },
             status_code=500
         )
-
-# REMOVED: All SSE endpoints and session management for Claude Desktop compatibility
-# - @app.get("/mcp") - SSE stream endpoint
-# - @app.delete("/mcp") - Session cleanup
-# - @app.get("/sessions") - Session status
-# - generate_sse_response, generate_server_events functions
 
 if __name__ == "__main__":
     logger.info("🚀 Starting Zerodha Kite MCP Server for Claude Desktop...")
