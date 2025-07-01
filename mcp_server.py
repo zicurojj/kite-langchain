@@ -1,23 +1,20 @@
 #!/usr/bin/env python3
 """
 MCP Server for Zerodha Kite Connect Trading - Droplet Deployment
-Runs on droplet and serves MCP over Streamable HTTP for Claude Desktop
+UPDATED for Claude Desktop compatibility with minimal changes
 """
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
-
+from fastapi.responses import JSONResponse
 from trading import place_order, get_positions
 from auth_fully_automated import FullyAutomatedKiteAuth
 from datetime import datetime
-import asyncio
 import json
 import logging
 import os
 import requests
 import uvicorn
-import uuid
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -42,11 +39,6 @@ auth_manager = FullyAutomatedKiteAuth()
 MCP_SERVER_PORT = int(os.getenv('MCP_SERVER_PORT', '3000'))
 CALLBACK_SERVER_PORT = int(os.getenv('CALLBACK_SERVER_PORT', '8080'))
 DROPLET_CALLBACK_URL = os.getenv('DROPLET_CALLBACK_URL', f"https://zap.zicuro.shop:{CALLBACK_SERVER_PORT}")
-
-# Session management
-sessions = {}  # Store session data
-
-
 
 def ensure_callback_server():
     """Ensure the callback server is running for OAuth handling"""
@@ -168,12 +160,7 @@ def buy_stock(stock: str, qty: int) -> str:
         return f"❌ Buy order failed: {e}"
 
 def sell_stock(stock: str, qty: int) -> str:
-    """Sell shares of a stock
-
-    Args:
-        stock: Trading symbol (e.g., 'RELIANCE', 'TCS')
-        qty: Number of shares to sell
-    """
+    """Sell shares of a stock"""
     try:
         # Check authentication first
         auth_status = auth_manager.get_token_status()
@@ -285,333 +272,19 @@ def health():
     except Exception as e:
         return {"status": "healthy", "server": "mcp", "port": MCP_SERVER_PORT, "error": str(e)}
 
-# Session management for Streamable HTTP
-sessions = {}  # session_id -> session_data
-pending_sse_streams = {}  # session_id -> response_queue
-active_sse_connections = {}  # session_id -> connection_info
-
-def _get_connection_duration(session_id: str) -> str:
-    """Get connection duration for a session"""
-    if session_id in active_sse_connections:
-        connected_at = active_sse_connections[session_id]["connected_at"]
-        try:
-            connected_time = datetime.fromisoformat(connected_at)
-            duration = datetime.now() - connected_time
-            return str(duration.total_seconds())
-        except Exception:
-            return "unknown"
-    return "unknown"
-
-@app.post("/mcp")
-async def mcp_streamable_http_endpoint(request: Request):
-    """Streamable HTTP endpoint for Claude Desktop MCP communication"""
-    try:
-        # Parse JSON-RPC request
-        body = await request.body()
-        json_request = json.loads(body.decode())
-
-        # Get or create session
-        session_id = request.headers.get("Mcp-Session-Id")
-        if not session_id and json_request.get("method") == "initialize":
-            session_id = str(uuid.uuid4())
-            sessions[session_id] = {"initialized": False}
-
-        logger.info(f"Received MCP request: {json_request.get('method')} (ID: {json_request.get('id')}) Session: {session_id}")
-
-        # Process the request
-        response = await process_mcp_request(json_request, session_id)
-
-        # Check if client accepts SSE streaming
-        accept_header = request.headers.get("Accept", "")
-        supports_sse = "text/event-stream" in accept_header
-
-        # For certain operations, we might want to stream responses
-        should_stream = (
-            json_request.get("method") in ["tools/call"] and
-            supports_sse and
-            json_request.get("params", {}).get("name") in ["show_portfolio", "check_authentication_status"]
-        )
-
-        if should_stream:
-            # Return SSE stream for real-time updates
-            return StreamingResponse(
-                generate_sse_response(response, session_id),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "Access-Control-Allow-Origin": "*",
-                    "Access-Control-Allow-Headers": "*",
-                    "Mcp-Session-Id": session_id or "",
-                }
-            )
-        else:
-            # Return single JSON response
-            json_response = JSONResponse(content=response)
-            if session_id:
-                json_response.headers["Mcp-Session-Id"] = session_id
-            return json_response
-
-    except Exception as e:
-        logger.error(f"MCP Streamable HTTP error: {e}")
-        error_response = {
-            "jsonrpc": "2.0",
-            "id": json_request.get("id") if 'json_request' in locals() else None,
-            "error": {"code": -32603, "message": f"Server error: {str(e)}"}
-        }
-        return JSONResponse(content=error_response, status_code=500)
-
-@app.get("/mcp")
-async def mcp_sse_stream_endpoint(request: Request):
-    """SSE stream endpoint for server-initiated messages with session management"""
-    # Try to get session ID from multiple sources
-    session_id = (
-        request.headers.get("Mcp-Session-Id") or
-        request.headers.get("X-Session-Id") or
-        request.query_params.get("session_id")
-    )
-
-    # Generate new session if none provided
-    if not session_id:
-        session_id = str(uuid.uuid4())
-        logger.info(f"🆕 Generated new session ID for SSE: {session_id}")
-    else:
-        logger.info(f"🔗 Using existing session ID for SSE: {session_id}")
-
-    # Ensure session exists
-    if session_id not in sessions:
-        sessions[session_id] = {
-            "initialized": False,
-            "created_at": datetime.now().isoformat(),
-            "sse_connected": True
-        }
-    else:
-        sessions[session_id]["sse_connected"] = True
-
-    # Create response queue for this session if it doesn't exist
-    if session_id not in pending_sse_streams:
-        pending_sse_streams[session_id] = asyncio.Queue()
-
-    # Track active SSE connection
-    active_sse_connections[session_id] = {
-        "connected_at": datetime.now().isoformat(),
-        "client_ip": request.client.host if request.client else "unknown"
-    }
-
-    logger.info(f"🔗 Starting SSE stream for session: {session_id}")
-
-    return StreamingResponse(
-        generate_server_events(session_id),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Headers": "*",
-            "Mcp-Session-Id": session_id,  # Return session ID to client
-        }
-    )
-
-async def generate_sse_response(response: dict, session_id: str):
-    """Generate SSE stream for a single response with session context"""
-    try:
-        # Add session context to response
-        enhanced_response = {
-            **response,
-            "session_id": session_id,
-            "timestamp": datetime.now().isoformat()
-        }
-
-        # Send the main response with session ID
-        yield f"id: {uuid.uuid4()}\n"
-        yield f"event: response\n"
-        yield f"data: {json.dumps(enhanced_response)}\n\n"
-
-        # For certain tool calls, we might send additional updates
-        if (response.get("result", {}).get("content") and
-            isinstance(response["result"]["content"], list) and
-            len(response["result"]["content"]) > 0):
-
-            # Send completion event with session context
-            completion_event = {
-                "type": "completion",
-                "session_id": session_id,
-                "timestamp": datetime.now().isoformat(),
-                "request_id": response.get("id")
-            }
-            yield f"id: {uuid.uuid4()}\n"
-            yield f"event: completion\n"
-            yield f"data: {json.dumps(completion_event)}\n\n"
-
-    except Exception as e:
-        logger.error(f"SSE response generation error for session {session_id}: {e}")
-        error_event = {
-            "type": "error",
-            "session_id": session_id,
-            "error": "Response generation failed",
-            "timestamp": datetime.now().isoformat()
-        }
-        yield f"id: {uuid.uuid4()}\n"
-        yield f"event: error\n"
-        yield f"data: {json.dumps(error_event)}\n\n"
-
-async def generate_server_events(session_id: str):
-    """Generate server-initiated SSE events with comprehensive session management"""
-    try:
-        # Send connection confirmation with session details
-        connection_event = {
-            "type": "connection",
-            "session_id": session_id,
-            "timestamp": datetime.now().isoformat(),
-            "server_info": {
-                "name": "zerodha-kite-trading",
-                "version": "1.0.0",
-                "transport": "streamable-http"
-            }
-        }
-        yield f"id: {uuid.uuid4()}\n"
-        yield f"event: connection\n"
-        yield f"data: {json.dumps(connection_event)}\n\n"
-
-        # Keep connection alive and send periodic updates
-        while True:
-            try:
-                # Check for any pending events for this session
-                if session_id in pending_sse_streams:
-                    queue = pending_sse_streams[session_id]
-                    try:
-                        event = await asyncio.wait_for(queue.get(), timeout=30.0)
-                        # Add session context to all events
-                        enhanced_event = {
-                            **event,
-                            "session_id": session_id,
-                            "timestamp": datetime.now().isoformat()
-                        }
-                        yield f"id: {uuid.uuid4()}\n"
-                        yield f"event: {event.get('type', 'message')}\n"
-                        yield f"data: {json.dumps(enhanced_event)}\n\n"
-                    except asyncio.TimeoutError:
-                        # Send keepalive with session context
-                        keepalive_event = {
-                            "type": "keepalive",
-                            "session_id": session_id,
-                            "timestamp": datetime.now().isoformat(),
-                            "connection_duration": _get_connection_duration(session_id)
-                        }
-                        yield f"id: {uuid.uuid4()}\n"
-                        yield f"event: keepalive\n"
-                        yield f"data: {json.dumps(keepalive_event)}\n\n"
-                else:
-                    # No queue for this session, just send keepalive
-                    await asyncio.sleep(30)
-                    keepalive_event = {
-                        "type": "keepalive",
-                        "session_id": session_id,
-                        "timestamp": datetime.now().isoformat(),
-                        "connection_duration": _get_connection_duration(session_id)
-                    }
-                    yield f"id: {uuid.uuid4()}\n"
-                    yield f"event: keepalive\n"
-                    yield f"data: {json.dumps(keepalive_event)}\n\n"
-
-            except asyncio.CancelledError:
-                logger.info(f"🔌 SSE stream cancelled for session: {session_id}")
-                break
-
-    except Exception as e:
-        logger.error(f"❌ SSE server events error for session {session_id}: {e}")
-        error_event = {
-            "type": "error",
-            "error": str(e),
-            "timestamp": datetime.now().isoformat()
-        }
-        yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
-    finally:
-        # Cleanup session data
-        if session_id in pending_sse_streams:
-            del pending_sse_streams[session_id]
-            logger.info(f"🗑️ Cleaned up SSE queue for session: {session_id}")
-
-        if session_id in active_sse_connections:
-            del active_sse_connections[session_id]
-            logger.info(f"🗑️ Cleaned up SSE connection tracking for session: {session_id}")
-
-        if session_id in sessions:
-            sessions[session_id]["sse_connected"] = False
-            logger.info(f"🔌 Marked SSE as disconnected for session: {session_id}")
-
-@app.delete("/mcp")
-async def mcp_session_cleanup(request: Request):
-    """Handle session termination as per MCP Streamable HTTP specification"""
-    session_id = request.headers.get("Mcp-Session-Id") or request.headers.get("X-Session-Id")
-
-    if not session_id:
-        return JSONResponse(
-            content={"error": "Session ID required for cleanup"},
-            status_code=400
-        )
-
-    cleanup_count = 0
-
-    # Cleanup session data
-    if session_id in sessions:
-        del sessions[session_id]
-        cleanup_count += 1
-        logger.info(f"🗑️ Cleaned up session data: {session_id}")
-
-    if session_id in pending_sse_streams:
-        del pending_sse_streams[session_id]
-        cleanup_count += 1
-        logger.info(f"🗑️ Cleaned up SSE stream queue: {session_id}")
-
-    if session_id in active_sse_connections:
-        del active_sse_connections[session_id]
-        cleanup_count += 1
-        logger.info(f"🗑️ Cleaned up SSE connection tracking: {session_id}")
-
-    return JSONResponse(content={
-        "status": "session_terminated",
-        "session_id": session_id,
-        "cleanup_count": cleanup_count,
-        "timestamp": datetime.now().isoformat()
-    })
-
-@app.get("/sessions")
-async def get_session_status():
-    """Get current session status for debugging"""
-    return JSONResponse(content={
-        "active_sessions": len(sessions),
-        "active_sse_streams": len(pending_sse_streams),
-        "active_sse_connections": len(active_sse_connections),
-        "sessions": {
-            session_id: {
-                **session_data,
-                "has_sse_queue": session_id in pending_sse_streams,
-                "has_sse_connection": session_id in active_sse_connections
-            }
-            for session_id, session_data in sessions.items()
-        },
-        "timestamp": datetime.now().isoformat()
-    })
-
-
-
-async def process_mcp_request(json_request: dict, session_id: str) -> dict:
-    """Process MCP request and return response"""
+async def process_mcp_request(json_request: dict, session_id: str = None) -> dict:
+    """Process MCP request and return response - UPDATED for Claude Desktop"""
     try:
         method = json_request.get("method")
         request_id = json_request.get("id")
         params = json_request.get("params", {})
 
         if method == "initialize":
-            # Handle initialization
-            sessions[session_id] = {"initialized": True}
-
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "result": {
-                    "protocolVersion": "2025-06-18",
+                    "protocolVersion": "2024-11-05",  # FIXED: Updated protocol version
                     "capabilities": {"tools": {}},
                     "serverInfo": {
                         "name": "zerodha-kite-trading",
@@ -660,6 +333,7 @@ async def process_mcp_request(json_request: dict, session_id: str) -> dict:
                 else:
                     result = tool_func()
 
+                # FIXED: Wrap result in proper MCP format for Claude Desktop
                 return {
                     "jsonrpc": "2.0",
                     "id": request_id,
@@ -690,12 +364,55 @@ async def process_mcp_request(json_request: dict, session_id: str) -> dict:
             "error": {"code": -32603, "message": f"Internal server error: {str(e)}"}
         }
 
+@app.post("/mcp")
+async def mcp_endpoint(request: Request):
+    """Simplified MCP endpoint for Claude Desktop - UPDATED"""
+    try:
+        # Parse JSON-RPC request
+        body = await request.body()
+        json_request = json.loads(body.decode())
+
+        logger.info(f"Received MCP request: {json_request.get('method')} (ID: {json_request.get('id')})")
+
+        # Process the request without session management
+        response = await process_mcp_request(json_request, session_id=None)
+
+        # Return simple JSON response
+        return JSONResponse(content=response)
+
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON decode error: {e}")
+        return JSONResponse(
+            content={
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {"code": -32700, "message": "Parse error"}
+            },
+            status_code=400
+        )
+    except Exception as e:
+        logger.error(f"MCP endpoint error: {e}")
+        return JSONResponse(
+            content={
+                "jsonrpc": "2.0",
+                "id": json_request.get("id") if 'json_request' in locals() else None,
+                "error": {"code": -32603, "message": f"Server error: {str(e)}"}
+            },
+            status_code=500
+        )
+
+# REMOVED: All SSE endpoints and session management for Claude Desktop compatibility
+# - @app.get("/mcp") - SSE stream endpoint
+# - @app.delete("/mcp") - Session cleanup
+# - @app.get("/sessions") - Session status
+# - generate_sse_response, generate_server_events functions
+
 if __name__ == "__main__":
-    logger.info("🚀 Starting Zerodha Kite MCP Server with Streamable HTTP support...")
+    logger.info("🚀 Starting Zerodha Kite MCP Server for Claude Desktop...")
     logger.info(f"🌐 MCP Server will run on port {MCP_SERVER_PORT}")
-    logger.info(f"🔗 Claude Desktop Streamable HTTP endpoint: https://zap.zicuro.shop:{MCP_SERVER_PORT}/mcp")
+    logger.info(f"🔗 Claude Desktop should connect to: https://zap.zicuro.shop:{MCP_SERVER_PORT}/mcp")
     logger.info(f"📡 Authentication stays HTTP - Callback server on port {CALLBACK_SERVER_PORT}")
-    logger.info(f"🎯 Transport: Streamable HTTP (HTTP POST + Optional SSE streaming)")
+    logger.info(f"🎯 Transport: Simple HTTP (JSON-RPC over HTTP)")
 
     # Run the FastAPI server
     uvicorn.run(app, host="0.0.0.0", port=MCP_SERVER_PORT)
