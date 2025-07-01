@@ -61,9 +61,11 @@ def send_request(data):
             }
         }
     except Exception as e:
+        # ENSURE ID IS NEVER None
+        safe_id = data.get("id", "bridge-error") if isinstance(data, dict) else "bridge-error"
         return {
             "jsonrpc": "2.0",
-            "id": data.get("id"),
+            "id": safe_id,
             "error": {
                 "code": -32603,
                 "message": f"Bridge error: {str(e)}"
