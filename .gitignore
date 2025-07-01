@@ -290,3 +290,7 @@ env*/
 run_local.py
 test_local.py
 dev_*.py
+
+
+claude_desktop_config.json
+mcp_bridge.py
