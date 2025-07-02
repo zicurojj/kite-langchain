@@ -485,11 +485,17 @@ def health():
             "timestamp": datetime.now().isoformat()
         }
 
+# Replace the process_mcp_request function in your mcp_server.py with this fixed version:
+
 async def process_mcp_request(json_request: dict, session_id: str = None) -> dict:
-    """Process MCP request and return response - UNCHANGED"""
+    """Process MCP request and return response - FIXED for JSON-RPC compliance"""
+    # Ensure we always have a valid request ID
+    request_id = json_request.get("id")
+    if request_id is None:
+        request_id = "unknown"  # Fallback for missing ID
+    
     try:
         method = json_request.get("method")
-        request_id = json_request.get("id")
         params = json_request.get("params", {})
 
         if method == "initialize":
@@ -572,21 +578,50 @@ async def process_mcp_request(json_request: dict, session_id: str = None) -> dic
         logger.error(f"MCP processing error: {e}")
         return {
             "jsonrpc": "2.0",
-            "id": json_request.get("id"),
+            "id": request_id,  # Always use the request_id we set at the beginning
             "error": {"code": -32603, "message": f"Internal server error: {str(e)}"}
         }
 
+# Also replace the mcp_endpoint function with this fixed version:
+
 @app.post("/mcp")
 async def mcp_endpoint(request: Request):
-    """MCP endpoint for Claude Desktop - UNCHANGED"""
+    """MCP endpoint for Claude Desktop - FIXED for JSON-RPC compliance"""
+    json_request = None
+    
     try:
+        # Parse JSON-RPC request
         body = await request.body()
         json_request = json.loads(body.decode())
 
+        # Validate that we have a proper JSON-RPC request
+        if not isinstance(json_request, dict):
+            return JSONResponse(
+                content={
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32700, "message": "Parse error: Request must be a JSON object"}
+                },
+                status_code=400
+            )
+
+        # Ensure request has required fields
+        if "method" not in json_request:
+            return JSONResponse(
+                content={
+                    "jsonrpc": "2.0",
+                    "id": json_request.get("id", "unknown"),
+                    "error": {"code": -32600, "message": "Invalid Request: Missing method field"}
+                },
+                status_code=400
+            )
+
         logger.info(f"Received MCP request: {json_request.get('method')} (ID: {json_request.get('id')})")
 
+        # Process the request
         response = await process_mcp_request(json_request, session_id=None)
 
+        # Return JSON response
         return JSONResponse(content=response)
 
     except json.JSONDecodeError as e:
@@ -595,21 +630,25 @@ async def mcp_endpoint(request: Request):
             content={
                 "jsonrpc": "2.0",
                 "id": None,
-                "error": {"code": -32700, "message": "Parse error"}
+                "error": {"code": -32700, "message": "Parse error: Invalid JSON"}
             },
             status_code=400
         )
     except Exception as e:
         logger.error(f"MCP endpoint error: {e}")
+        # Always ensure we have a valid ID in error responses
+        error_id = "unknown"
+        if json_request and isinstance(json_request, dict):
+            error_id = json_request.get("id", "unknown")
+        
         return JSONResponse(
             content={
                 "jsonrpc": "2.0",
-                "id": json_request.get("id") if 'json_request' in locals() else None,
+                "id": error_id,
                 "error": {"code": -32603, "message": f"Server error: {str(e)}"}
             },
             status_code=500
         )
-
 # ============================================================================
 # NEW: LANGCHAIN ENDPOINTS
 # ============================================================================
