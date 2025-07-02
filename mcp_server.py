@@ -271,7 +271,7 @@ TOOLS = {
 }
 
 # ============================================================================
-# NEW: LANGCHAIN INTEGRATION
+# NEW: LANGCHAIN INTEGRATION (Fixed to match your original auth pattern)
 # ============================================================================
 
 # LangChain Tools that use your existing functions
@@ -374,26 +374,41 @@ if LANGCHAIN_AVAILABLE:
                 
             except Exception as e:
                 return f"❌ Error analyzing {symbol}: {e}"
+
+# Initialize LangChain agent - NO auth validation during startup
+smart_agent = None
+
+def initialize_smart_agent():
+    """Initialize smart agent only when first needed - lazy loading"""
+    global smart_agent
     
-    # Initialize LangChain agent
-    smart_agent = None
-    if os.getenv('OPENAI_API_KEY'):
-        try:
-            # Create tools using your existing functions
-            langchain_tools = [
-                KiteBuyTool(),
-                KiteSellTool(), 
-                KitePortfolioTool(),
-                KiteAuthTool(),
-                MarketAnalysisTool()
-            ]
-            
-            # Initialize LLM
-            llm = ChatOpenAI(model="gpt-4", temperature=0.1)
-            
-            # Create prompt
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", """You are an expert Indian stock market trading assistant using Zerodha Kite Connect.
+    if smart_agent is not None:
+        return smart_agent
+        
+    if not LANGCHAIN_AVAILABLE:
+        logger.warning("⚠️ LangChain not available")
+        return None
+        
+    if not os.getenv('OPENAI_API_KEY'):
+        logger.warning("⚠️ OPENAI_API_KEY not set")
+        return None
+    
+    try:
+        # Create tools using your existing functions
+        langchain_tools = [
+            KiteBuyTool(),
+            KiteSellTool(), 
+            KitePortfolioTool(),
+            KiteAuthTool(),
+            MarketAnalysisTool()
+        ]
+        
+        # Initialize LLM
+        llm = ChatOpenAI(model="gpt-4", temperature=0.1)
+        
+        # Create prompt
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are an expert Indian stock market trading assistant using Zerodha Kite Connect.
 
 You have access to:
 - Real-time trading through Kite Connect
@@ -409,20 +424,19 @@ Guidelines:
 - Consider risk management in all suggestions
 
 Be professional and prioritize user's financial safety."""),
-                ("user", "{input}")
-            ])
-            
-            # Create agent
-            agent = create_openai_functions_agent(llm, langchain_tools, prompt)
-            smart_agent = AgentExecutor(agent=agent, tools=langchain_tools, verbose=True)
-            
-            logger.info("✅ LangChain Smart Agent initialized")
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize LangChain agent: {e}")
-            smart_agent = None
-    else:
-        logger.warning("⚠️ OPENAI_API_KEY not set - Smart Agent unavailable")
+            ("user", "{input}")
+        ])
+        
+        # Create agent
+        agent = create_openai_functions_agent(llm, langchain_tools, prompt)
+        smart_agent = AgentExecutor(agent=agent, tools=langchain_tools, verbose=True)
+        
+        logger.info("✅ LangChain Smart Agent initialized")
+        return smart_agent
+        
+    except Exception as e:
+        logger.warning(f"⚠️ LangChain agent initialization failed: {e}")
+        return None
 
 # ============================================================================
 # EXISTING FASTAPI ENDPOINTS (UNCHANGED)
@@ -443,18 +457,24 @@ def root():
 def health():
     """Health check endpoint"""
     try:
-        status = auth_manager.get_token_status()
+        # DON'T check auth status during health check - just return server health
         return {
             "status": "healthy",
             "server": "enhanced_mcp",
             "port": MCP_SERVER_PORT,
-            "auth_status": status["status"],
             "callback_server": DROPLET_CALLBACK_URL,
             "langchain_available": LANGCHAIN_AVAILABLE,
-            "smart_agent_ready": smart_agent is not None
+            "openai_configured": bool(os.getenv('OPENAI_API_KEY')),
+            "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
-        return {"status": "healthy", "server": "enhanced_mcp", "port": MCP_SERVER_PORT, "error": str(e)}
+        return {
+            "status": "healthy", 
+            "server": "enhanced_mcp", 
+            "port": MCP_SERVER_PORT, 
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
 
 async def process_mcp_request(json_request: dict, session_id: str = None) -> dict:
     """Process MCP request and return response - UNCHANGED"""
@@ -590,7 +610,9 @@ if LANGCHAIN_AVAILABLE:
     @app.post("/ai-chat")
     async def ai_chat(request: Request):
         """Natural language trading interface using LangChain"""
-        if not smart_agent:
+        # Initialize agent only when needed
+        agent = initialize_smart_agent()
+        if not agent:
             return JSONResponse(
                 content={"error": "Smart agent not available. Please set OPENAI_API_KEY."},
                 status_code=503
@@ -610,7 +632,7 @@ if LANGCHAIN_AVAILABLE:
             logger.info(f"AI Chat: {message}")
             
             # Execute through smart agent
-            result = smart_agent.invoke({"input": message})
+            result = agent.invoke({"input": message})
             
             return JSONResponse(content={
                 "status": "success",
@@ -662,7 +684,9 @@ if LANGCHAIN_AVAILABLE:
     @app.post("/ai-trade")
     async def ai_trade(request: Request):
         """Intelligent trading with confirmation"""
-        if not smart_agent:
+        # Initialize agent only when needed
+        agent = initialize_smart_agent()
+        if not agent:
             return JSONResponse(
                 content={"error": "Smart agent not available. Please set OPENAI_API_KEY."},
                 status_code=503
@@ -691,7 +715,7 @@ if LANGCHAIN_AVAILABLE:
             logger.info(f"AI Trade: {command}")
             
             # Execute through smart agent
-            result = smart_agent.invoke({"input": command})
+            result = agent.invoke({"input": command})
             
             return JSONResponse(content={
                 "status": "success",
