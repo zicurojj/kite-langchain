@@ -289,8 +289,8 @@ if LANGCHAIN_AVAILABLE:
     
     class KiteBuyTool(BaseTool):
         """LangChain tool that uses your existing buy_stock function"""
-        name = "kite_buy_stock"
-        description = "Buy shares using Kite Connect"
+        name: str = "kite_buy_stock"
+        description: str = "Buy shares using Kite Connect"
         args_schema = StockInput
         
         def _run(self, stock: str, qty: int) -> str:
@@ -298,8 +298,8 @@ if LANGCHAIN_AVAILABLE:
     
     class KiteSellTool(BaseTool):
         """LangChain tool that uses your existing sell_stock function"""
-        name = "kite_sell_stock"
-        description = "Sell shares using Kite Connect"
+        name: str = "kite_sell_stock"
+        description: str = "Sell shares using Kite Connect"
         args_schema = StockInput
         
         def _run(self, stock: str, qty: int) -> str:
@@ -307,24 +307,24 @@ if LANGCHAIN_AVAILABLE:
     
     class KitePortfolioTool(BaseTool):
         """LangChain tool that uses your existing show_portfolio function"""
-        name = "kite_show_portfolio"
-        description = "Show current portfolio positions"
+        name: str = "kite_show_portfolio"
+        description: str = "Show current portfolio positions"
         
         def _run(self) -> str:
             return show_portfolio()
     
     class KiteAuthTool(BaseTool):
         """LangChain tool that uses your existing auth check function"""
-        name = "kite_check_auth"
-        description = "Check Kite Connect authentication status"
+        name: str = "kite_check_auth"
+        description: str = "Check Kite Connect authentication status"
         
         def _run(self) -> str:
             return check_authentication_status()
     
     class MarketAnalysisTool(BaseTool):
         """Market analysis tool using Yahoo Finance"""
-        name = "analyze_stock"
-        description = "Analyze stock with real-time market data and technical indicators"
+        name: str = "analyze_stock"
+        description: str = "Analyze stock with real-time market data and technical indicators"
         args_schema = AnalysisInput
         
         def _run(self, symbol: str) -> str:

@@ -4,8 +4,13 @@ kiteconnect
 python-dotenv
 pydantic
 requests
-langchain>=0.1.0
-langchain-openai>=0.0.8
-yfinance>=0.2.18
-pandas>=2.0.0
-openai>=1.0.0
+
+# LangChain dependencies
+langchain
+langchain-openai
+openai
+
+# Market analysis dependencies  
+yfinance
+pandas
+numpy
