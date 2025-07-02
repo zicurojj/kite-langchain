@@ -15,6 +15,8 @@ import logging
 import os
 import requests
 import uvicorn
+from typing import Type, Optional
+
 
 # LangChain imports (new)
 try:
@@ -275,6 +277,11 @@ TOOLS = {
 # ============================================================================
 
 # LangChain Tools that use your existing functions
+# Add this import at the top of your mcp_server.py file (around line 18):
+from typing import Type, Optional
+
+# Then replace your LangChain tool classes (starting around line 290) with these:
+
 if LANGCHAIN_AVAILABLE:
     
     class StockInput(BaseModel):
@@ -291,7 +298,7 @@ if LANGCHAIN_AVAILABLE:
         """LangChain tool that uses your existing buy_stock function"""
         name: str = "kite_buy_stock"
         description: str = "Buy shares using Kite Connect"
-        args_schema = StockInput
+        args_schema: Type[BaseModel] = StockInput  # ✅ Added type annotation
         
         def _run(self, stock: str, qty: int) -> str:
             return buy_stock(stock, qty)
@@ -300,7 +307,7 @@ if LANGCHAIN_AVAILABLE:
         """LangChain tool that uses your existing sell_stock function"""
         name: str = "kite_sell_stock"
         description: str = "Sell shares using Kite Connect"
-        args_schema = StockInput
+        args_schema: Type[BaseModel] = StockInput  # ✅ Added type annotation
         
         def _run(self, stock: str, qty: int) -> str:
             return sell_stock(stock, qty)
@@ -309,6 +316,7 @@ if LANGCHAIN_AVAILABLE:
         """LangChain tool that uses your existing show_portfolio function"""
         name: str = "kite_show_portfolio"
         description: str = "Show current portfolio positions"
+        # No args_schema needed for this tool since it takes no parameters
         
         def _run(self) -> str:
             return show_portfolio()
@@ -317,6 +325,7 @@ if LANGCHAIN_AVAILABLE:
         """LangChain tool that uses your existing auth check function"""
         name: str = "kite_check_auth"
         description: str = "Check Kite Connect authentication status"
+        # No args_schema needed for this tool since it takes no parameters
         
         def _run(self) -> str:
             return check_authentication_status()
@@ -325,7 +334,7 @@ if LANGCHAIN_AVAILABLE:
         """Market analysis tool using Yahoo Finance"""
         name: str = "analyze_stock"
         description: str = "Analyze stock with real-time market data and technical indicators"
-        args_schema = AnalysisInput
+        args_schema: Type[BaseModel] = AnalysisInput  # ✅ Added type annotation
         
         def _run(self, symbol: str) -> str:
             try:
