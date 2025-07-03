@@ -481,13 +481,13 @@ if LANGCHAIN_AVAILABLE:
             except Exception as e:
                 return f"❌ Error analyzing {symbol}: {e}"
 
-# Initialize LangChain agent - NO auth validation during startup
+# REPLACE the smart_agent initialization in mcp_server.py with this:
+
+# Initialize LangChain agent - LAZY LOADING ONLY
 smart_agent = None
 
-# Replace the initialize_smart_agent() function in mcp_server.py
-
 def initialize_smart_agent():
-    """Initialize smart agent only when first needed - lazy loading"""
+    """Initialize smart agent only when first needed - with robust error handling"""
     global smart_agent
     
     if smart_agent is not None:
@@ -499,14 +499,19 @@ def initialize_smart_agent():
         
     openai_key = os.getenv('OPENAI_API_KEY')
     if not openai_key:
-        logger.warning("⚠️ OPENAI_API_KEY not set")
-        logger.warning(f"⚠️ Environment check: {list(os.environ.keys())[:5]}...")  # Debug
+        logger.warning("⚠️ OPENAI_API_KEY not set - AI features disabled")
         return None
     
     try:
-        logger.info(f"🔑 OpenAI API Key found: {openai_key[:10]}...")  # Debug log
+        logger.info("🤖 Initializing LangChain agent...")
         
-        # Create tools using your existing functions
+        # Import only when needed to avoid startup crashes
+        from langchain_core.tools import BaseTool
+        from langchain.agents import AgentExecutor, create_tool_calling_agent
+        from langchain_core.prompts import ChatPromptTemplate
+        from langchain_openai import ChatOpenAI
+        
+        # Create tools using your existing functions  
         langchain_tools = [
             KiteBuyTool(),
             KiteSellTool(), 
@@ -515,14 +520,15 @@ def initialize_smart_agent():
             MarketAnalysisTool()
         ]
         
-        # Initialize LLM with explicit API key
+        # Initialize LLM
         llm = ChatOpenAI(
             model="gpt-4", 
             temperature=0.1,
-            openai_api_key=openai_key  # Explicit key
+            openai_api_key=openai_key,
+            timeout=30  # Add timeout to prevent hanging
         )
         
-        # Create prompt (updated format)
+        # Create prompt
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are an expert Indian stock market trading assistant using Zerodha Kite Connect.
 
@@ -541,16 +547,18 @@ Guidelines:
 
 Be professional and prioritize user's financial safety."""),
             ("human", "{input}"),
-            ("placeholder", "{agent_scratchpad}")  # Required for newer LangChain
+            ("placeholder", "{agent_scratchpad}")
         ])
         
-        # Create agent (updated function name)
+        # Create agent
         agent = create_tool_calling_agent(llm, langchain_tools, prompt)
         smart_agent = AgentExecutor(
             agent=agent, 
             tools=langchain_tools, 
-            verbose=True,
-            handle_parsing_errors=True  # Better error handling
+            verbose=False,  # Reduce noise in logs
+            handle_parsing_errors=True,
+            max_iterations=5,  # Prevent infinite loops
+            max_execution_time=60  # Add execution timeout
         )
         
         logger.info("✅ LangChain Smart Agent initialized successfully")
@@ -558,9 +566,8 @@ Be professional and prioritize user's financial safety."""),
         
     except Exception as e:
         logger.error(f"❌ LangChain agent initialization failed: {e}")
-        logger.error(f"❌ Error type: {type(e).__name__}")
-        import traceback
-        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+        # Don't crash the server - just disable AI features
+        smart_agent = None
         return None
 # ============================================================================
 # EXISTING FASTAPI ENDPOINTS (UNCHANGED)
@@ -577,27 +584,31 @@ def root():
         "smart_agent_ready": smart_agent is not None
     }
 
+# REPLACE the /health endpoint in mcp_server.py with this robust version:
+
 @app.get("/health")
 def health():
-    """Health check endpoint"""
+    """Health check endpoint - NEVER check auth during health check"""
     try:
-        # DON'T check auth status during health check - just return server health
         return {
             "status": "healthy",
-            "server": "enhanced_mcp",
+            "server": "enhanced_mcp", 
             "port": MCP_SERVER_PORT,
             "callback_server": DROPLET_CALLBACK_URL,
             "langchain_available": LANGCHAIN_AVAILABLE,
             "openai_configured": bool(os.getenv('OPENAI_API_KEY')),
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "message": "MCP server is responding"
         }
     except Exception as e:
+        # Even if there's an error, return 200 for health check
         return {
-            "status": "healthy", 
+            "status": "healthy_with_warnings", 
             "server": "enhanced_mcp", 
             "port": MCP_SERVER_PORT, 
-            "error": str(e),
-            "timestamp": datetime.now().isoformat()
+            "warning": str(e),
+            "timestamp": datetime.now().isoformat(),
+            "message": "Server responding despite warnings"
         }
 
 # Replace the process_mcp_request function in your mcp_server.py with this fixed version:
@@ -895,15 +906,29 @@ if LANGCHAIN_AVAILABLE:
             )
 
 if __name__ == "__main__":
-    logger.info("🚀 Starting Enhanced Zerodha Kite MCP Server with LangChain...")
-    logger.info(f"🌐 MCP Server will run on port {MCP_SERVER_PORT}")
-    logger.info(f"🔗 Claude Desktop URL: https://zap.zicuro.shop:{MCP_SERVER_PORT}/mcp")
-    
-    if LANGCHAIN_AVAILABLE and smart_agent:
-        logger.info(f"🤖 AI Chat URL: https://zap.zicuro.shop:{MCP_SERVER_PORT}/ai-chat")
-        logger.info(f"📊 AI Analysis URL: https://zap.zicuro.shop:{MCP_SERVER_PORT}/ai-analyze")
-        logger.info(f"⚡ AI Trade URL: https://zap.zicuro.shop:{MCP_SERVER_PORT}/ai-trade")
-    else:
-        logger.info("⚠️ LangChain features unavailable - set OPENAI_API_KEY to enable")
+    try:
+        logger.info("🚀 Starting Enhanced Zerodha Kite MCP Server...")
+        logger.info(f"🌐 MCP Server will run on port {MCP_SERVER_PORT}")
+        logger.info(f"🔗 Claude Desktop URL: https://zap.zicuro.shop:{MCP_SERVER_PORT}/mcp")
+        
+        # SAFE check for LangChain without trying to initialize agent
+        if LANGCHAIN_AVAILABLE:
+            openai_key = os.getenv('OPENAI_API_KEY')
+            if openai_key:
+                logger.info("✅ LangChain available with OpenAI API key")
+                logger.info(f"🤖 AI Chat URL: https://zap.zicuro.shop:{MCP_SERVER_PORT}/ai-chat")
+                logger.info(f"📊 AI Analysis URL: https://zap.zicuro.shop:{MCP_SERVER_PORT}/ai-analyze")
+                logger.info(f"⚡ AI Trade URL: https://zap.zicuro.shop:{MCP_SERVER_PORT}/ai-trade")
+            else:
+                logger.info("⚠️ LangChain available but OPENAI_API_KEY not set")
+        else:
+            logger.info("⚠️ LangChain not available - basic trading only")
 
-    uvicorn.run(app, host="0.0.0.0", port=MCP_SERVER_PORT)
+        logger.info("🔄 Starting server...")
+        uvicorn.run(app, host="0.0.0.0", port=MCP_SERVER_PORT, access_log=False)
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to start MCP server: {e}")
+        import traceback
+        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+        sys.exit(1)

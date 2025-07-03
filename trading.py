@@ -66,16 +66,8 @@ def ensure_authenticated():
     except Exception:
         return None
 
-# Try to initialize client, but don't force authentication on import
-try:
-    kc = get_authenticated_kite_client()
-    print("✅ Kite Connect client initialized successfully")
-except TokenExpiredException:
-    print("🔐 Authentication required. Use get_kite_login_url() when ready to trade.")
-    kc = None
-except Exception as e:
-    print(f"⚠️ Could not initialize Kite Connect client: {e}")
-    kc = None
+# Initialize client lazily when first used (prevents server crashes)  
+logger.info("🔧 Trading module loaded - client will be initialized when first used")
 
 def place_order(tradingsymbol, quantity, transaction_type, exchange="NSE", product="CNC", order_type="MARKET", price=None, trigger_price=None, variety="regular", validity="DAY"):
     """
