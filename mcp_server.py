@@ -19,12 +19,14 @@ from typing import Type, Optional
 
 
 # LangChain imports (new)
+# Replace the LangChain imports section in mcp_server.py (around line 18)
+
+# LangChain imports (FIXED)
 try:
-    from langchain.tools import BaseTool
-    from langchain.agents import AgentExecutor, create_openai_functions_agent
-    from langchain.prompts import ChatPromptTemplate
+    from langchain_core.tools import BaseTool
+    from langchain.agents import AgentExecutor, create_tool_calling_agent  # Updated function name
+    from langchain_core.prompts import ChatPromptTemplate
     from langchain_openai import ChatOpenAI
-    from langchain.memory import ConversationBufferWindowMemory
     from pydantic import BaseModel, Field
     import yfinance as yf
     import pandas as pd
@@ -33,6 +35,7 @@ try:
 except ImportError as e:
     LANGCHAIN_AVAILABLE = False
     logging.warning(f"⚠️ LangChain not available: {e}")
+    logging.warning(f"⚠️ Install: pip install langchain langchain-openai langchain-core yfinance pandas")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -354,14 +357,13 @@ from typing import Type, Optional
 
 # Then replace your LangChain tool classes (starting around line 290) with these:
 
+# Replace the LangChain tool classes in mcp_server.py
+
 if LANGCHAIN_AVAILABLE:
     
     class StockInput(BaseModel):
         stock: str = Field(description="Trading symbol (e.g., 'RELIANCE', 'TCS')")
         qty: int = Field(description="Number of shares")
-    
-    class ChatInput(BaseModel):
-        message: str = Field(description="Natural language trading command")
     
     class AnalysisInput(BaseModel):
         symbol: str = Field(description="Stock symbol to analyze")
@@ -369,46 +371,69 @@ if LANGCHAIN_AVAILABLE:
     class KiteBuyTool(BaseTool):
         """LangChain tool that uses your existing buy_stock function"""
         name: str = "kite_buy_stock"
-        description: str = "Buy shares using Kite Connect"
-        args_schema: Type[BaseModel] = StockInput  # ✅ Added type annotation
+        description: str = "Buy shares using Kite Connect. Always check authentication first."
+        args_schema: Type[BaseModel] = StockInput
         
         def _run(self, stock: str, qty: int) -> str:
-            return buy_stock(stock, qty)
+            """Execute the tool"""
+            try:
+                result = buy_stock(stock, qty)
+                return str(result)
+            except Exception as e:
+                return f"❌ Buy failed: {e}"
     
     class KiteSellTool(BaseTool):
         """LangChain tool that uses your existing sell_stock function"""
         name: str = "kite_sell_stock"
-        description: str = "Sell shares using Kite Connect"
-        args_schema: Type[BaseModel] = StockInput  # ✅ Added type annotation
+        description: str = "Sell shares using Kite Connect. Always check authentication first."
+        args_schema: Type[BaseModel] = StockInput
         
         def _run(self, stock: str, qty: int) -> str:
-            return sell_stock(stock, qty)
+            """Execute the tool"""
+            try:
+                result = sell_stock(stock, qty)
+                return str(result)
+            except Exception as e:
+                return f"❌ Sell failed: {e}"
     
     class KitePortfolioTool(BaseTool):
         """LangChain tool that uses your existing show_portfolio function"""
         name: str = "kite_show_portfolio"
-        description: str = "Show current portfolio positions"
-        # No args_schema needed for this tool since it takes no parameters
+        description: str = "Show current portfolio positions. Requires authentication."
         
         def _run(self) -> str:
-            return show_portfolio()
+            """Execute the tool"""
+            try:
+                result = show_portfolio()
+                return str(result)
+            except Exception as e:
+                return f"❌ Portfolio fetch failed: {e}"
     
     class KiteAuthTool(BaseTool):
-        """LangChain tool that uses your existing auth check function"""
+        """LangChain tool that checks authentication and provides login URL if needed"""
         name: str = "kite_check_auth"
-        description: str = "Check Kite Connect authentication status"
-        # No args_schema needed for this tool since it takes no parameters
+        description: str = "Check Kite Connect authentication status and provide login URL if needed"
         
         def _run(self) -> str:
-            return check_authentication_status()
+            """Execute the tool"""
+            try:
+                status = check_authentication_status()
+                if "NOT AUTHENTICATED" in status:
+                    # Auto-provide login URL
+                    login_url = get_kite_login_url()
+                    return f"{status}\n\n{login_url}"
+                return str(status)
+            except Exception as e:
+                return f"❌ Auth check failed: {e}"
     
     class MarketAnalysisTool(BaseTool):
         """Market analysis tool using Yahoo Finance"""
         name: str = "analyze_stock"
         description: str = "Analyze stock with real-time market data and technical indicators"
-        args_schema: Type[BaseModel] = AnalysisInput  # ✅ Added type annotation
+        args_schema: Type[BaseModel] = AnalysisInput
         
         def _run(self, symbol: str) -> str:
+            """Execute the tool"""
             try:
                 # Add .NS for NSE stocks
                 ticker_symbol = f"{symbol}.NS" if not symbol.endswith('.NS') else symbol
@@ -459,6 +484,8 @@ if LANGCHAIN_AVAILABLE:
 # Initialize LangChain agent - NO auth validation during startup
 smart_agent = None
 
+# Replace the initialize_smart_agent() function in mcp_server.py
+
 def initialize_smart_agent():
     """Initialize smart agent only when first needed - lazy loading"""
     global smart_agent
@@ -470,11 +497,15 @@ def initialize_smart_agent():
         logger.warning("⚠️ LangChain not available")
         return None
         
-    if not os.getenv('OPENAI_API_KEY'):
+    openai_key = os.getenv('OPENAI_API_KEY')
+    if not openai_key:
         logger.warning("⚠️ OPENAI_API_KEY not set")
+        logger.warning(f"⚠️ Environment check: {list(os.environ.keys())[:5]}...")  # Debug
         return None
     
     try:
+        logger.info(f"🔑 OpenAI API Key found: {openai_key[:10]}...")  # Debug log
+        
         # Create tools using your existing functions
         langchain_tools = [
             KiteBuyTool(),
@@ -484,10 +515,14 @@ def initialize_smart_agent():
             MarketAnalysisTool()
         ]
         
-        # Initialize LLM
-        llm = ChatOpenAI(model="gpt-4", temperature=0.1)
+        # Initialize LLM with explicit API key
+        llm = ChatOpenAI(
+            model="gpt-4", 
+            temperature=0.1,
+            openai_api_key=openai_key  # Explicit key
+        )
         
-        # Create prompt
+        # Create prompt (updated format)
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are an expert Indian stock market trading assistant using Zerodha Kite Connect.
 
@@ -505,20 +540,28 @@ Guidelines:
 - Consider risk management in all suggestions
 
 Be professional and prioritize user's financial safety."""),
-            ("user", "{input}")
+            ("human", "{input}"),
+            ("placeholder", "{agent_scratchpad}")  # Required for newer LangChain
         ])
         
-        # Create agent
-        agent = create_openai_functions_agent(llm, langchain_tools, prompt)
-        smart_agent = AgentExecutor(agent=agent, tools=langchain_tools, verbose=True)
+        # Create agent (updated function name)
+        agent = create_tool_calling_agent(llm, langchain_tools, prompt)
+        smart_agent = AgentExecutor(
+            agent=agent, 
+            tools=langchain_tools, 
+            verbose=True,
+            handle_parsing_errors=True  # Better error handling
+        )
         
-        logger.info("✅ LangChain Smart Agent initialized")
+        logger.info("✅ LangChain Smart Agent initialized successfully")
         return smart_agent
         
     except Exception as e:
-        logger.warning(f"⚠️ LangChain agent initialization failed: {e}")
+        logger.error(f"❌ LangChain agent initialization failed: {e}")
+        logger.error(f"❌ Error type: {type(e).__name__}")
+        import traceback
+        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
         return None
-
 # ============================================================================
 # EXISTING FASTAPI ENDPOINTS (UNCHANGED)
 # ============================================================================

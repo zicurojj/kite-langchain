@@ -1,16 +1,17 @@
-fastapi
-uvicorn
-kiteconnect
-python-dotenv
-pydantic
-requests
+# Add these to your requirements.txt file:
 
-# LangChain dependencies
-langchain
-langchain-openai
-openai
+# Existing requirements (keep these)
+kiteconnect>=4.0.0
+fastapi>=0.100.0
+uvicorn>=0.20.0
+python-dotenv>=1.0.0
+pydantic>=2.0.0
 
-# Market analysis dependencies  
-yfinance
-pandas
-numpy
+# NEW: LangChain requirements (ADD THESE)
+langchain>=0.1.0
+langchain-openai>=0.1.0
+langchain-core>=0.1.0
+langchain-community>=0.0.20
+yfinance>=0.2.18
+pandas>=2.0.0
+openai>=1.0.0
