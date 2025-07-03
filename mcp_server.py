@@ -232,8 +232,56 @@ def server_health_check() -> str:
     except Exception as e:
         return f"❌ Server health check failed: {e}"
 
-# Tool registry for MCP (UNCHANGED)
+# Add this to your mcp_server.py after the existing TOOLS dictionary (around line 184)
+
+# Add LangChain tools to MCP registry
+def ai_market_analysis(symbol: str) -> str:
+    """AI-powered market analysis using LangChain"""
+    if not LANGCHAIN_AVAILABLE:
+        return "❌ LangChain not available. Please install required dependencies."
+    
+    try:
+        analysis_tool = MarketAnalysisTool()
+        result = analysis_tool._run(symbol)
+        return result
+    except Exception as e:
+        return f"❌ Analysis failed: {e}"
+
+def ai_trading_assistant(message: str) -> str:
+    """Natural language trading assistant using LangChain"""
+    if not LANGCHAIN_AVAILABLE:
+        return "❌ LangChain not available. Please install required dependencies."
+    
+    # Initialize agent only when needed
+    agent = initialize_smart_agent()
+    if not agent:
+        return "❌ Smart agent not available. Please set OPENAI_API_KEY."
+    
+    try:
+        result = agent.invoke({"input": message})
+        return result["output"]
+    except Exception as e:
+        return f"❌ AI Assistant failed: {e}"
+
+def ai_stock_recommendation(symbol: str, action: str = "analyze") -> str:
+    """Get AI-powered stock recommendations"""
+    if not LANGCHAIN_AVAILABLE:
+        return "❌ LangChain not available. Please install required dependencies."
+    
+    agent = initialize_smart_agent()
+    if not agent:
+        return "❌ Smart agent not available. Please set OPENAI_API_KEY."
+    
+    try:
+        query = f"Analyze {symbol} and provide {action} recommendation with reasoning"
+        result = agent.invoke({"input": query})
+        return result["output"]
+    except Exception as e:
+        return f"❌ Recommendation failed: {e}"
+
+# Update your TOOLS dictionary to include LangChain tools
 TOOLS = {
+    # Existing tools
     "get_kite_login_url": {
         "function": get_kite_login_url,
         "description": "Get Kite Connect login URL for authentication",
@@ -269,6 +317,30 @@ TOOLS = {
         "function": server_health_check,
         "description": "Check server health and authentication status",
         "parameters": {}
+    },
+    
+    # NEW: LangChain-powered tools for Claude Desktop
+    "ai_market_analysis": {
+        "function": ai_market_analysis,
+        "description": "AI-powered market analysis with technical indicators and recommendations",
+        "parameters": {
+            "symbol": {"type": "string", "description": "Stock symbol to analyze (e.g., 'RELIANCE', 'TCS')"}
+        }
+    },
+    "ai_trading_assistant": {
+        "function": ai_trading_assistant,
+        "description": "Natural language trading assistant - ask any trading question or command",
+        "parameters": {
+            "message": {"type": "string", "description": "Your trading question or command in natural language"}
+        }
+    },
+    "ai_stock_recommendation": {
+        "function": ai_stock_recommendation,
+        "description": "Get AI-powered stock recommendations with detailed reasoning",
+        "parameters": {
+            "symbol": {"type": "string", "description": "Stock symbol for recommendation"},
+            "action": {"type": "string", "description": "Type of recommendation: 'buy', 'sell', 'hold', or 'analyze'"}
+        }
     }
 }
 
