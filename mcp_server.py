@@ -55,6 +55,7 @@ app.add_middleware(
 
 # Initialize authentication manager
 auth_manager = FullyAutomatedKiteAuth()
+smart_agent = None  # ✅ FIXED: Global scope
 
 # Server configuration
 MCP_SERVER_PORT = int(os.getenv('MCP_SERVER_PORT', '3000'))
@@ -386,14 +387,6 @@ else:
 # NEW: LANGCHAIN INTEGRATION (Fixed to match your original auth pattern)
 # ============================================================================
 
-# LangChain Tools that use your existing functions
-# Add this import at the top of your mcp_server.py file (around line 18):
-from typing import Type, Optional
-
-# Then replace your LangChain tool classes (starting around line 290) with these:
-
-# Replace the LangChain tool classes in mcp_server.py
-
 if LANGCHAIN_AVAILABLE:
     
     class StockInput(BaseModel):
@@ -489,8 +482,7 @@ if LANGCHAIN_AVAILABLE:
                     
             except Exception as e:
                 return f"❌ Error analyzing {symbol}: {e}"
-smart_agent = None
-
+            
 def initialize_smart_agent():
     """Initialize smart agent only when first needed - with robust error handling"""
     global smart_agent
@@ -573,7 +565,6 @@ Be intelligent and user-friendly - don't make users jump through multiple steps.
         
     except Exception as e:
         logger.error(f"❌ LangChain agent initialization failed: {e}")
-        # Don't crash the server - just disable AI features
         smart_agent = None
         return None
 # ============================================================================
@@ -844,9 +835,12 @@ if LANGCHAIN_AVAILABLE:
             
             logger.info(f"AI Analyze: {symbol}")
             
-            # Use market analysis tool directly
-            analysis_tool = MarketAnalysisTool()
-            result = analysis_tool._run(symbol)
+            # ✅ FIXED: Create tool instance safely
+            if LANGCHAIN_AVAILABLE:
+                analysis_tool = MarketAnalysisTool()
+                result = analysis_tool._run(symbol)
+            else:
+                result = "❌ LangChain not available"
             
             return JSONResponse(content={
                 "status": "success",
