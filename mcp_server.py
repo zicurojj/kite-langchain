@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import requests
+import traceback
 import uvicorn
 import sys
 from typing import Type, Optional
@@ -849,7 +850,10 @@ if LANGCHAIN_AVAILABLE:
                 try:
                     analysis_tool = MarketAnalysisTool()
                 except NameError:
-                    result = "❌ MarketAnalysisTool not available"
+                    return JSONResponse(
+                        content={"error": "❌ MarketAnalysisTool not available"},
+                        status_code=500
+                    )
                 result = analysis_tool._run(symbol)
             else:
                 result = "❌ LangChain not available"
@@ -862,60 +866,60 @@ if LANGCHAIN_AVAILABLE:
             })
             
         except Exception as e:
-            logger.error(f"AI Analyze error: {e}")
+            logger.error(f"AI Analyze error: {e}\n{traceback.format_exc()}")
             return JSONResponse(
                 content={"error": f"Analysis failed: {e}"},
                 status_code=500
             )
+
+@app.post("/ai-trade")
+async def ai_trade(request: Request):
+    """Intelligent trading with confirmation"""
+    # Initialize agent only when needed
+    agent = initialize_smart_agent()
+    if not agent:
+        return JSONResponse(
+            content={"error": "Smart agent not available. Please set OPENAI_API_KEY."},
+            status_code=503
+        )
     
-    @app.post("/ai-trade")
-    async def ai_trade(request: Request):
-        """Intelligent trading with confirmation"""
-        # Initialize agent only when needed
-        agent = initialize_smart_agent()
-        if not agent:
+    try:
+        body = await request.body()
+        data = json.loads(body.decode())
+        command = data.get("command", "")
+        confirm = data.get("confirm", False)
+        
+        if not command:
             return JSONResponse(
-                content={"error": "Smart agent not available. Please set OPENAI_API_KEY."},
-                status_code=503
+                content={"error": "Command is required"},
+                status_code=400
             )
         
-        try:
-            body = await request.body()
-            data = json.loads(body.decode())
-            command = data.get("command", "")
-            confirm = data.get("confirm", False)
-            
-            if not command:
-                return JSONResponse(
-                    content={"error": "Command is required"},
-                    status_code=400
-                )
-            
-            # Add safety check for large trades
-            if not confirm and any(word in command.lower() for word in ['buy', 'sell']):
-                return JSONResponse(content={
-                    "status": "confirmation_required",
-                    "message": "Trade command requires confirmation. Set 'confirm': true",
-                    "command": command
-                })
-            
-            logger.info(f"AI Trade: {command}")
-            
-            # Execute through smart agent
-            result = agent.invoke({"input": command})
-            
+        # Add safety check for large trades
+        if not confirm and any(word in command.lower() for word in ['buy', 'sell']):
             return JSONResponse(content={
-                "status": "success",
-                "command": command,
-                "result": result["output"],
-                "timestamp": datetime.now().isoformat()
+                "status": "confirmation_required",
+                "message": "Trade command requires confirmation. Set 'confirm': true",
+                "command": command
             })
-            
-        except Exception as e:
-            logger.error(f"AI Trade error: {e}")
-            return JSONResponse(
-                content={"error": f"Trade failed: {e}"},
-                status_code=500
+        
+        logger.info(f"AI Trade: {command}")
+        
+        # Execute through smart agent
+        result = agent.invoke({"input": command})
+        
+        return JSONResponse(content={
+            "status": "success",
+            "command": command,
+            "result": result["output"],
+            "timestamp": datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"AI Trade error: {e}\n{traceback.format_exc()}")
+        return JSONResponse(
+            content={"error": f"Trade failed: {e}"},
+            status_code=500
             )
 
 if __name__ == "__main__":
