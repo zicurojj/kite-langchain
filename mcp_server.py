@@ -117,7 +117,7 @@ def get_kite_login_url() -> str:
         return f"❌ Failed to get login URL: {e}"
 
 def check_authentication_status() -> str:
-    """Check current authentication status"""
+    """Check current authentication status and auto-provide login URL if needed"""
     try:
         status = auth_manager.get_token_status()
 
@@ -137,27 +137,51 @@ def check_authentication_status() -> str:
                        f"🎯 Ready for trading operations!")
 
             except Exception:
-                return (f"⚠️ **Authentication Status: TOKEN EXISTS BUT INVALID**\n\n"
-                       f"The stored token appears to be expired or invalid.\n"
-                       f"Please use get_kite_login_url() to re-authenticate.")
+                # Token exists but invalid - auto-provide login URL
+                return get_smart_auth_response("TOKEN EXISTS BUT INVALID")
         else:
-            return (f"❌ **Authentication Status: NOT AUTHENTICATED**\n\n"
-                   f"No valid authentication token found.\n"
-                   f"Use get_kite_login_url() to authenticate before trading.")
+            # No valid token - auto-provide login URL
+            return get_smart_auth_response("NOT AUTHENTICATED")
 
     except Exception as e:
         logger.error(f"Error checking auth status: {e}")
         return f"❌ Error checking authentication status: {e}"
 
-def buy_stock(stock: str, qty: int) -> str:
-    """Buy shares of a stock"""
+def get_smart_auth_response(status_reason: str) -> str:
+    """Smart authentication response that automatically provides login URL"""
     try:
-        # Check authentication first
+        # Ensure callback server is running
+        callback_available = ensure_callback_server()
+        
+        if not callback_available:
+            return (f"❌ **Authentication Server Not Available**\n\n"
+                   f"The OAuth callback server is not running on the droplet.\n"
+                   f"Please ensure the callback server is deployed and accessible.\n"
+                   f"💡 Run: docker-compose up -d")
+
+        # Get the login URL automatically
+        login_url = auth_manager.get_login_url(use_original_redirect=True)
+        
+        return (f"❌ **Authentication Status: {status_reason}**\n\n"
+                f"🔐 **Click this link to authenticate:**\n"
+                f"**{login_url}**\n\n"
+                f"📱 This will open in your browser (any device/OS)\n"
+                f"🔐 After login, tokens will be automatically saved\n"
+                f"✅ You'll then be ready to place trades!\n\n"
+                f"💡 Authentication is valid until token expires\n"
+                f"🔄 Callback URL: https://zap.zicuro.shop/callback")
+                
+    except Exception as e:
+        logger.error(f"Error generating smart auth response: {e}")
+        return f"❌ Failed to generate authentication URL: {e}"
+
+def buy_stock(stock: str, qty: int) -> str:
+    """Buy shares with smart authentication handling"""
+    try:
+        # Check authentication first with smart response
         auth_status = auth_manager.get_token_status()
         if auth_status["status"] != "valid":
-            return (f"❌ **Authentication Required**\n\n"
-                   f"Please authenticate first using get_kite_login_url()\n"
-                   f"Current status: {auth_status['message']}")
+            return get_smart_auth_response("AUTHENTICATION REQUIRED FOR TRADING")
 
         # Validate inputs
         if not stock or not isinstance(stock, str):
@@ -179,19 +203,16 @@ def buy_stock(stock: str, qty: int) -> str:
     except Exception as e:
         logger.error(f"Buy order error: {e}")
         if "token" in str(e).lower() or "auth" in str(e).lower():
-            return (f"❌ **Authentication Expired**\n\n"
-                   f"Your session has expired. Please use get_kite_login_url() to re-authenticate.")
+            return get_smart_auth_response("AUTHENTICATION EXPIRED")
         return f"❌ Buy order failed: {e}"
 
 def sell_stock(stock: str, qty: int) -> str:
-    """Sell shares of a stock"""
+    """Sell shares with smart authentication handling"""
     try:
-        # Check authentication first
+        # Check authentication first with smart response  
         auth_status = auth_manager.get_token_status()
         if auth_status["status"] != "valid":
-            return (f"❌ **Authentication Required**\n\n"
-                   f"Please authenticate first using get_kite_login_url()\n"
-                   f"Current status: {auth_status['message']}")
+            return get_smart_auth_response("AUTHENTICATION REQUIRED FOR TRADING")
 
         # Validate inputs
         if not stock or not isinstance(stock, str):
@@ -213,15 +234,21 @@ def sell_stock(stock: str, qty: int) -> str:
     except Exception as e:
         logger.error(f"Sell order error: {e}")
         if "token" in str(e).lower() or "auth" in str(e).lower():
-            return (f"❌ **Authentication Expired**\n\n"
-                   f"Your session has expired. Please use get_kite_login_url() to re-authenticate.")
+            return get_smart_auth_response("AUTHENTICATION EXPIRED")
         return f"❌ Sell order failed: {e}"
 
 def show_portfolio() -> str:
-    """Show current portfolio positions and holdings"""
+    """Show portfolio with smart authentication handling"""
     try:
+        # Check authentication first with smart response
+        auth_status = auth_manager.get_token_status()
+        if auth_status["status"] != "valid":
+            return get_smart_auth_response("AUTHENTICATION REQUIRED FOR PORTFOLIO")
+            
         return get_positions()
     except Exception as e:
+        if "token" in str(e).lower() or "auth" in str(e).lower():
+            return get_smart_auth_response("AUTHENTICATION EXPIRED")
         return f"❌ Error fetching portfolio: {e}"
 
 def server_health_check() -> str:
@@ -376,104 +403,78 @@ if LANGCHAIN_AVAILABLE:
     class AnalysisInput(BaseModel):
         symbol: str = Field(description="Stock symbol to analyze")
     
-    class KiteBuyTool(BaseTool):
-        """LangChain tool that uses your existing buy_stock function"""
-        name: str = "kite_buy_stock"
-        description: str = "Buy shares using Kite Connect. Always check authentication first."
-        args_schema: Type[BaseModel] = StockInput
-        
-        def _run(self, stock: str, qty: int) -> str:
-            """Execute the tool"""
-            try:
-                result = buy_stock(stock, qty)
-                return str(result)
-            except Exception as e:
-                return f"❌ Buy failed: {e}"
-    
-    class KiteSellTool(BaseTool):
-        """LangChain tool that uses your existing sell_stock function"""
-        name: str = "kite_sell_stock"
-        description: str = "Sell shares using Kite Connect. Always check authentication first."
-        args_schema: Type[BaseModel] = StockInput
-        
-        def _run(self, stock: str, qty: int) -> str:
-            """Execute the tool"""
-            try:
-                result = sell_stock(stock, qty)
-                return str(result)
-            except Exception as e:
-                return f"❌ Sell failed: {e}"
-    
-    class KitePortfolioTool(BaseTool):
-        """LangChain tool that uses your existing show_portfolio function"""
-        name: str = "kite_show_portfolio"
-        description: str = "Show current portfolio positions. Requires authentication."
-        
-        def _run(self) -> str:
-            """Execute the tool"""
-            try:
-                result = show_portfolio()
-                return str(result)
-            except Exception as e:
-                return f"❌ Portfolio fetch failed: {e}"
-    
     class KiteAuthTool(BaseTool):
-        """LangChain tool that checks authentication and provides login URL if needed"""
+        """Smart authentication tool that always provides login URL when needed"""
         name: str = "kite_check_auth"
-        description: str = "Check Kite Connect authentication status and provide login URL if needed"
-        
+        description: str = "Check authentication status and automatically provide login URL if needed"
+            
         def _run(self) -> str:
-            """Execute the tool"""
-            try:
-                status = check_authentication_status()
-                if "NOT AUTHENTICATED" in status:
-                    # Auto-provide login URL
-                    login_url = get_kite_login_url()
-                    return f"{status}\n\n{login_url}"
-                return str(status)
-            except Exception as e:
-                return f"❌ Auth check failed: {e}"
-    
+            return check_authentication_status()  # Now uses smart auth
+        
+    class KiteBuyTool(BaseTool):
+        """Smart buy tool with automatic authentication handling"""
+        name: str = "kite_buy_stock"
+        description: str = "Buy shares - automatically handles authentication and provides login URL if needed"
+        args_schema: Type[BaseModel] = StockInput
+            
+        def _run(self, stock: str, qty: int) -> str:
+            return buy_stock(stock, qty)  # Now uses smart auth
+        
+    class KiteSellTool(BaseTool):
+        """Smart sell tool with automatic authentication handling"""
+        name: str = "kite_sell_stock"
+        description: str = "Sell shares - automatically handles authentication and provides login URL if needed"
+        args_schema: Type[BaseModel] = StockInput
+            
+        def _run(self, stock: str, qty: int) -> str:
+            return sell_stock(stock, qty)  # Now uses smart auth
+        
+    class KitePortfolioTool(BaseTool):
+        """Smart portfolio tool with automatic authentication handling"""
+        name: str = "kite_show_portfolio"
+        description: str = "Show portfolio - automatically handles authentication and provides login URL if needed"
+            
+        def _run(self) -> str:
+            return show_portfolio()  # Now uses smart auth
+        
     class MarketAnalysisTool(BaseTool):
         """Market analysis tool using Yahoo Finance"""
         name: str = "analyze_stock"
         description: str = "Analyze stock with real-time market data and technical indicators"
         args_schema: Type[BaseModel] = AnalysisInput
-        
+            
         def _run(self, symbol: str) -> str:
             """Execute the tool"""
             try:
                 # Add .NS for NSE stocks
                 ticker_symbol = f"{symbol}.NS" if not symbol.endswith('.NS') else symbol
                 ticker = yf.Ticker(ticker_symbol)
-                
+                    
                 # Get data
                 hist = ticker.history(period="1mo")
                 info = ticker.info
-                
+                    
                 if hist.empty:
                     return f"❌ No data found for {symbol}"
-                
+                    
                 current_price = hist['Close'].iloc[-1]
                 prev_close = hist['Close'].iloc[-2] if len(hist) > 1 else current_price
                 change = current_price - prev_close
                 change_pct = (change / prev_close) * 100
-                
+                    
                 # Technical indicators
                 volume_avg = hist['Volume'].mean()
                 current_volume = hist['Volume'].iloc[-1]
                 high_52w = hist['High'].max()
                 low_52w = hist['Low'].min()
-                
+                    
                 analysis = f"""📊 **Market Analysis for {symbol}**
-
-**Current Price:** ₹{current_price:.2f}
-**Change:** ₹{change:+.2f} ({change_pct:+.2f}%)
-**Volume:** {current_volume:,.0f} (Avg: {volume_avg:,.0f})
-**52W Range:** ₹{low_52w:.2f} - ₹{high_52w:.2f}
-
-**Trading Recommendation:**"""
-                
+                    **Current Price:** ₹{current_price:.2f}
+                    **Change:** ₹{change:+.2f} ({change_pct:+.2f}%)
+                    **Volume:** {current_volume:,.0f} (Avg: {volume_avg:,.0f})
+                    **52W Range:** ₹{low_52w:.2f} - ₹{high_52w:.2f}
+                    **Trading Recommendation:**"""
+                    
                 # Simple trading logic
                 if change_pct > 2 and current_volume > volume_avg * 1.2:
                     analysis += "\n🚀 **STRONG BUY** - Strong momentum with volume support"
@@ -483,12 +484,12 @@ if LANGCHAIN_AVAILABLE:
                     analysis += "\n⚠️ **SELL** - Heavy selling pressure"
                 else:
                     analysis += "\n⏳ **HOLD** - Wait for clearer signals"
-                
+                    
                 return analysis
-                
+                    
             except Exception as e:
                 return f"❌ Error analyzing {symbol}: {e}"
-    smart_agent = None
+smart_agent = None
 
 def initialize_smart_agent():
     """Initialize smart agent only when first needed - with robust error handling"""
@@ -534,25 +535,27 @@ def initialize_smart_agent():
         
         # Create prompt
         prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an expert Indian stock market trading assistant using Zerodha Kite Connect.
+    ("system", """You are an expert Indian stock market trading assistant using Zerodha Kite Connect.
 
-You have access to:
-- Real-time trading through Kite Connect
-- Live market data analysis
-- Portfolio management functions
-- Authentication management
+IMPORTANT: You have intelligent authentication handling. When any trading operation requires authentication:
+- The system automatically provides the login URL in the response
+- You should present this URL clearly to the user
+- No need to call separate authentication functions first
+
+Your tools automatically handle authentication and provide login URLs when needed.
 
 Guidelines:
-- Always check authentication before trading
-- Analyze market data before suggesting trades
+- Always attempt trading operations directly - authentication is handled automatically
+- When you receive a login URL in any response, present it clearly to the user
+- Analyze market data before suggesting trades using the market analysis tool
 - Use Indian stock symbols (RELIANCE, TCS, INFY, etc.)
 - Provide clear reasoning for trade recommendations
 - Consider risk management in all suggestions
 
-Be professional and prioritize user's financial safety."""),
-            ("human", "{input}"),
-            ("placeholder", "{agent_scratchpad}")
-        ])
+Be intelligent and user-friendly - don't make users jump through multiple steps."""),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}")
+])
         
         # Create agent
         agent = create_tool_calling_agent(llm, langchain_tools, prompt)

@@ -383,32 +383,19 @@ def get_positions():
     # Check if we have an authenticated client
     if kc is None:
         try:
-            # Try automatic authentication when token expires
-            print(get_auth_retry_message())
-            kc = auth_manager.get_authenticated_client(auto_authenticate=True)
+            kc = auth_manager.get_authenticated_client(auto_authenticate=False)
+        except TokenExpiredException:
+            return "❌ **Authentication Required for Portfolio**\n\n🔐 Please use the authentication link provided by Claude to login."
         except Exception as e:
-            return f"❌ Automatic authentication failed: {e}\n💡 Please use get_kite_login_url() to authenticate"
+            return f"❌ Authentication failed: {e}\n💡 Please authenticate using the link provided by Claude."
 
     try:
         positions = kc.positions()
         if positions and positions.get("net"):
-            return "\n".join([f"stock: {p['tradingsymbol']}, qty: {p['quantity']}, currentPrice: {p['last_price']}" for p in positions["net"]])
+            return "\n".join([f"Stock: {p['tradingsymbol']}, Qty: {p['quantity']}, Price: ₹{p['last_price']}" for p in positions["net"]])
         else:
-            return "No positions found."
+            return "📊 No positions found in your portfolio."
     except Exception as e:
-        # Token might have expired during the call
         if is_token_expired_error(e):
-            print(get_auth_retry_message())
-            kc = None  # Reset client
-            try:
-                # Try automatic re-authentication
-                kc = auth_manager.get_authenticated_client(auto_authenticate=True)
-                # Retry the positions call with new token
-                positions = kc.positions()
-                if positions and positions.get("net"):
-                    return "\n".join([f"stock: {p['tradingsymbol']}, qty: {p['quantity']}, currentPrice: {p['last_price']}" for p in positions["net"]])
-                else:
-                    return "No positions found."
-            except Exception as auth_error:
-                return f"❌ Automatic re-authentication failed: {auth_error}\n💡 Please use get_kite_login_url() to authenticate"
+            return "❌ **Token Expired During Operation**\n\n🔐 Please use the authentication link provided by Claude to re-login."
         return f"❌ Error fetching positions: {e}"
