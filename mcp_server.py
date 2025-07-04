@@ -15,6 +15,7 @@ import logging
 import os
 import requests
 import uvicorn
+import sys
 from typing import Type, Optional
 
 
@@ -268,7 +269,10 @@ if LANGCHAIN_AVAILABLE:
     def ai_market_analysis(symbol: str) -> str:
         """AI-powered market analysis using LangChain"""
         try:
-            analysis_tool = MarketAnalysisTool()  # ✅ Now safe!
+            try:
+                analysis_tool = MarketAnalysisTool()
+            except NameError:
+                return "❌ MarketAnalysisTool not available"  # ✅ Now safe!
             result = analysis_tool._run(symbol)
             return result
         except Exception as e:
@@ -509,13 +513,18 @@ def initialize_smart_agent():
         from langchain_openai import ChatOpenAI
         
         # Create tools using your existing functions  
-        langchain_tools = [
-            KiteBuyTool(),
-            KiteSellTool(), 
-            KitePortfolioTool(),
-            KiteAuthTool(),
-            MarketAnalysisTool()
-        ]
+        langchain_tools = []
+        try:
+            langchain_tools = [
+                KiteBuyTool(),
+                KiteSellTool(), 
+                KitePortfolioTool(),
+                KiteAuthTool(),
+                MarketAnalysisTool()
+            ]
+        except NameError as e:
+            logger.error(f"❌ Tool classes not available: {e}")
+            return None
         
         # Initialize LLM
         llm = ChatOpenAI(
@@ -837,7 +846,10 @@ if LANGCHAIN_AVAILABLE:
             
             # ✅ FIXED: Create tool instance safely
             if LANGCHAIN_AVAILABLE:
-                analysis_tool = MarketAnalysisTool()
+                try:
+                    analysis_tool = MarketAnalysisTool()
+                except NameError:
+                    result = "❌ MarketAnalysisTool not available"
                 result = analysis_tool._run(symbol)
             else:
                 result = "❌ LangChain not available"
