@@ -1,13 +1,8 @@
-# Add these to your requirements.txt file:
-
-# Existing requirements (keep these)
 kiteconnect>=4.0.0
 fastapi>=0.100.0
 uvicorn>=0.20.0
 python-dotenv>=1.0.0
 pydantic>=2.0.0
-
-# NEW: LangChain requirements (ADD THESE)
 langchain>=0.1.0
 langchain-openai>=0.1.0
 langchain-core>=0.1.0

@@ -488,11 +488,7 @@ if LANGCHAIN_AVAILABLE:
                 
             except Exception as e:
                 return f"❌ Error analyzing {symbol}: {e}"
-
-# REPLACE the smart_agent initialization in mcp_server.py with this:
-
-# Initialize LangChain agent - LAZY LOADING ONLY
-smart_agent = None
+    smart_agent = None
 
 def initialize_smart_agent():
     """Initialize smart agent only when first needed - with robust error handling"""
